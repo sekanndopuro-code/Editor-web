@@ -183,19 +183,15 @@ export const RightPanel: React.FC<{
     }, 2600); // EditorView.swift :: RightPanel.restartLabelTimer (2.6s)
   };
 
+  // editing / metaOpen のどちらかが変わるたびにタイマーを張り直す。
+  // (以前は effect が2つに分かれていて、マウント時に後ろの effect が
+  //  前の effect のタイマーを消してしまっていた)
   useEffect(() => {
-    restartLabelTimer(state.editing);
+    restartLabelTimer(state.editing || state.metaOpen);
     return () => {
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     };
-  }, [state.editing]);
-
-  useEffect(() => {
-    restartLabelTimer(state.metaOpen);
-    return () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    };
-  }, [state.metaOpen]);
+  }, [state.editing, state.metaOpen]);
 
   const editLabels = [
     'Back',
@@ -474,9 +470,11 @@ export const RightPanel: React.FC<{
 
       {/* Edit / Meta floating name column (EditorView.swift :: RightPanel.labelColumn) */}
       {(state.editing || state.metaOpen) && (
+        // 外側: フェードアウト(opacity)担当。
+        // 内側: panel-swap-in アニメ担当。
+        // 同じ要素に両方あると、アニメの fill-mode:both が opacity:1 を保持し続けて
+        // インラインの opacity(=フェード)が上書きされ、いつまでも消えなくなる。
         <div
-          key={`labels-${columnKey}`}
-          className="panel-swap-in"
           style={{
             position: 'absolute',
             top: edgeInset,
@@ -490,9 +488,19 @@ export const RightPanel: React.FC<{
             pointerEvents: 'none',
           }}
         >
-          {(state.editing ? editLabels : metaLabels).map((lbl, idx) => (
-            <PanelEditLabel key={idx} text={lbl} fontBoost={fontBoost} pitch={pitch} />
-          ))}
+          <div
+            key={`labels-${columnKey}`}
+            className="panel-swap-in"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-end',
+            }}
+          >
+            {(state.editing ? editLabels : metaLabels).map((lbl, idx) => (
+              <PanelEditLabel key={idx} text={lbl} fontBoost={fontBoost} pitch={pitch} />
+            ))}
+          </div>
         </div>
       )}
     </div>

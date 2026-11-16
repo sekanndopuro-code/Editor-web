@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+/* EditorView.swift :: EditorBackground (Color.black full-screen canvas base) */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #000000;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* PanelIcons.swift :: PanelFont & Renderers.swift :: draw */
+@keyframes panelSwapIn {
+  from {
+    /* PanelIcons.swift :: AnyTransition.panelSwap (offset: 46, opacity: 0) */
+    transform: translateX(46px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0px);
+    opacity: 1;
+  }
+}
+
+.panel-swap-in {
+  /* PanelIcons.swift :: AnyTransition.panelSwap (duration: 0.12s, delay: 0.07s) */
+  animation: panelSwapIn 0.12s ease-out 0.07s both;
+}

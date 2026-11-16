@@ -1,0 +1,1135 @@
+全45ファイル（app_core.txt）をすべて欠損なく受け取りました！
+中身を精査した結果、テストプレイ廃止の方針とも完全に噛み合っており、移植の全体像がくっきり見えました。
+
+テストプレイ廃止に伴う確認事項（元コードとの整理）
+
+1.  GameAudio（曲のサンプルクロック再生）の扱い AudioController.swift と EditorState.swift が参照している
+    GameAudio クラス自体は TestPlay.swift 側に定義されていましたが、必要なメソッド仕様（begin(chartTime,
+    offsetTotal), warm, setRate, setStretchSize, setVolume, halt,
+    chartTime(atUptime), uptime(atChartTime), outputLatency）は EditorState.swift
+    からすべて読み取れました。Phase 2 で Web Audio API をベースに同等品を新設します。
+2.  削除・置換する箇所
+      - RightPanel のカチンコ（TEST）ボタンと EditorState.startTestPlay /
+        EditorView.fullScreenCover は削除します。（代わりに左帯の FX ボタンによる擬似テストプレイ表示はそのまま残します）
+      - SETTING の「タッチエフェクト（白い輪＋赤い丸）」は、TouchEffect.swift を除外したため、Web版で必要な場合は
+        Pointer Events で数十行の軽量オーバーレイとして再現するか、一旦オフ／省略にするか後ほど選べます。
+
+Web版アーキテクチャ設計（元ファイルとの対応表）
+
+まず Vite + React + TypeScript でプロジェクトを作ります。
+見た目を「そっくりそのまま」にする最大の秘訣は、EditorView.swift
+にある DesignCanvas（基準高さ 820px でスケーリングする仕組み）を CSS の transform: scale() でそのまま再現すること
+です。これにより、左帯 145px・シークバー 66+38px・右ボタン列 58/82px・アイコンの座標データ（PanelIcons,
+MoreMenuIcons, MetaMenuIcons）・ノーツ描画比率を数値そのまま移植できます。
+
+src/
+├── core/                      ← ★ Phase 1（今回出力）
+│   ├── Beat.ts                (Beat.swift + Sheets.swift の Beat.parse)
+│   ├── Effects.ts             (Effects.swift)
+│   ├── ChartModel.ts          (ChartModel.swift + JSONValue.swift の規約)
+│   ├── NoteIndex.ts           (NoteIndex.swift)
+│   ├── SeekDensity.ts         (SeekDensity.swift)
+│   ├── DemoChart.ts           (DemoChart.swift)
+│   └── MCZArchive.ts          (MCZImporter.swift + ZipReader/Writer → JSZip置換)
+├── audio/                     ← Phase 2
+│   ├── TimeStretch.ts         (TimeStretch.swift の FloatFFT + StretchedPCMSource)
+│   ├── KeySound.ts            (KeySound.swift + KeySoundData.swift)
+│   └── AudioEngine.ts         (SongPCM + GameAudio の Web Audio API 実装)
+├── state/                     ← Phase 3〜4
+│   ├── EditorState.ts         (EditorState.swift + Tools + Meta + FX + Plugins)
+│   └── storage.ts             (localStorage + IndexedDB 保存)
+├── canvas/                    ← Phase 3〜4
+│   ├── LaneRenderer.ts        (Renderers.swift)
+│   ├── RenderersFX.ts         (RenderersFX.swift)
+│   └── StripAndSeekRenderer.ts
+├── components/                ← Phase 3〜4
+│   ├── RootView.tsx           (RootView.swift)
+│   ├── EditorView.tsx         (EditorView.swift + DesignCanvas)
+│   ├── RightPanel.tsx         (RightPanel + PanelIcons + MetaMenuIcons + MoreMenu)
+│   ├── SideWindow.tsx         (SideWindow.swift: BPM / Effect / Info / SETTING)
+│   ├── GridSettingsDialog.tsx (GridSettingsDialog.swift)
+│   ├── ReviewNotice.tsx       (ReviewNotice.swift)
+│   └── UIAdjustLayer.tsx      (UIAdjust.swift)
+└── plugins/                   ← Phase 5 (最後に LuaEngineSource + BuiltinPlugins を貼って実装)
+    ├── luaWorker.ts           (LuaEngine.swift + LuaEngineSource)
+    ├── PluginBridge.ts        (PluginBridge.swift + PluginSession.swift)
+    ├── PluginStore.ts         (PluginStore.swift + IndexedDB)
+    └── PluginUI.tsx           (PluginPanel.swift + PluginImagePreview.swift)
+
+プロジェクト作成コマンド（ローカルで始める場合）
+
+npm create vite@latest malody-slide-editor-web -- --template react-ts
+cd malody-slide-editor-web
+npm install jszip
+
+(Google AI Studio の Build モード等で始める場合は、package.json に "jszip": "^3.10.1"
+を追加してください)
+
+★ Phase 1：コアデータモデル & .mc / .mcz 入出力（完全版）
+
+元の Swift コードの細かい挙動（負の拍 [-12, 2, 4] の正規化、未知キーの保持、JSON キーの昇順ソート、EffectMap
+の同時刻マージ仕様など）を 1文字も省略せず TypeScript 化した Phase 1 一式 です。そのままコピペして使えます。
+
+1. src/core/Beat.ts
+
+export function gcdInt(a: number, b: number): number {
+  let x = Math.abs(Math.trunc(a));
+  let y = Math.abs(Math.trunc(b));
+  while (y !== 0) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x === 0 ? 1 : x;
+}
+
+/**
+ * 全角の数字・記号や各種マイナス記号を半角にそろえ、空白を除去する (Sheets.swift の normalizedForNumberInput)
+ */
+export function normalizeNumberInput(s: string): string {
+  let out = '';
+  for (const ch of s) {
+    const code = ch.codePointAt(0)!;
+    if (code >= 0xff10 && code <= 0xff19) {
+      out += String.fromCodePoint(code - 0xff10 + 0x30);
+    } else if (
+      code === 0xff0d ||
+      code === 0x2212 ||
+      code === 0x2010 ||
+      code === 0x2011 ||
+      code === 0x2012 ||
+      code === 0x2013 ||
+      code === 0x2014 ||
+      code === 0x30fc ||
+      code === 0xff70
+    ) {
+      out += '-';
+    } else if (code === 0xff0b) {
+      out += '+';
+    } else if (code === 0xff1a) {
+      out += ':';
+    } else if (code === 0xff0f) {
+      out += '/';
+    } else if (code === 0xff0e) {
+      out += '.';
+    } else if (!/\s/.test(ch)) {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+export type BeatTriple = [number, number, number];
+
+/**
+ * Malody の beat 表記 [整数部, 分子, 分母] (= 整数部 + 分子/分母)。0拍始まり。
+ */
+export class Beat {
+  readonly m: number;
+  readonly n: number;
+  readonly d: number;
+
+  constructor(m: number, n: number, d: number) {
+    this.m = Math.trunc(m);
+    this.n = Math.trunc(n);
+    this.d = Math.max(1, Math.trunc(d));
+  }
+
+  static readonly zero = new Beat(0, 0, 1);
+
+  get numerator(): number {
+    return this.m * this.d + this.n;
+  }
+
+  get value(): number {
+    return this.numerator / this.d;
+  }
+
+  /**
+   * 保存用の [整数部, 分子, 分母]。
+   * 負の拍は「整数部にマイナスをつけ、分子は 0 以上」にする (例: -11.5拍 → [-12, 2, 4])。
+   */
+  get json(): BeatTriple {
+    if (this.n < 0) {
+      const t = Beat.ticks(this.numerator, this.d);
+      return [t.m, t.n, t.d];
+    }
+    return [this.m, this.n, this.d];
+  }
+
+  get label(): string {
+    return `${this.m}:${this.n}/${this.d}`;
+  }
+
+  static ticks(t: number, den: number): Beat {
+    const dd = Math.max(1, Math.trunc(den));
+    const ti = Math.trunc(t);
+    const q = Math.floor(ti / dd);
+    return new Beat(q, ti - q * dd, dd);
+  }
+
+  static nearest(v: number, den: number): Beat {
+    const dd = Math.max(1, Math.trunc(den));
+    return Beat.ticks(Math.round(v * dd), dd);
+  }
+
+  static fromJSON(raw: unknown): Beat | null {
+    if (!Array.isArray(raw) || raw.length < 3) return null;
+    const a0 = raw[0], a1 = raw[1], a2 = raw[2];
+    if (typeof a0 !== 'number' || typeof a1 !== 'number' || typeof a2 !== 'number') return null;
+    if (!Number.isFinite(a0) || !Number.isFinite(a1) || !Number.isFinite(a2)) return null;
+    return new Beat(Math.trunc(a0), Math.trunc(a1), Math.trunc(a2));
+  }
+
+  /**
+   * "8:0/4" / "8" 形式を解釈 (マイナスをつけられるのは整数部のみ)
+   */
+  static parse(s: string): Beat | null {
+    const t = normalizeNumberInput(s);
+    if (!t) return null;
+    const parts = t.split(/[:/]/);
+    if (parts.length === 0 || parts.some((p) => !/^[+-]?\d+$/.test(p))) return null;
+    const nums = parts.map((p) => Number.parseInt(p, 10));
+    if (nums.some((v) => !Number.isSafeInteger(v))) return null;
+    if (nums.length === 1) return new Beat(nums[0], 0, 1);
+    if (nums.length === 3 && nums[1] >= 0 && nums[2] > 0) return new Beat(nums[0], nums[1], nums[2]);
+    return null;
+  }
+
+  static compare(a: Beat, b: Beat): number {
+    // 桁あふれ防止のため BigInt で正確に比較
+    const l = BigInt(a.numerator) * BigInt(b.d);
+    const r = BigInt(b.numerator) * BigInt(a.d);
+    if (l < r) return -1;
+    if (l > r) return 1;
+    return 0;
+  }
+
+  equals(other: Beat): boolean {
+    return Beat.compare(this, other) === 0;
+  }
+
+  lessThan(other: Beat): boolean {
+    return Beat.compare(this, other) < 0;
+  }
+
+  greaterThan(other: Beat): boolean {
+    return Beat.compare(this, other) > 0;
+  }
+
+  private static commonDen(a: Beat, b: Beat): number | null {
+    const g = gcdInt(a.d, b.d);
+    const q = (a.d / g) * b.d;
+    if (!Number.isSafeInteger(q) || q > 2 ** 40) return null;
+    return q;
+  }
+
+  add(b: Beat): Beat {
+    const l = Beat.commonDen(this, b);
+    if (l === null) return Beat.nearest(this.value + b.value, 1_048_576);
+    const num = this.numerator * (l / this.d) + b.numerator * (l / b.d);
+    if (!Number.isSafeInteger(num)) return Beat.nearest(this.value + b.value, 1_048_576);
+    return Beat.ticks(num, l);
+  }
+
+  sub(b: Beat): Beat {
+    const l = Beat.commonDen(this, b);
+    if (l === null) return Beat.nearest(this.value - b.value, 1_048_576);
+    const num = this.numerator * (l / this.d) - b.numerator * (l / b.d);
+    if (!Number.isSafeInteger(num)) return Beat.nearest(this.value - b.value, 1_048_576);
+    return Beat.ticks(num, l);
+  }
+}
+
+2. src/core/Effects.ts
+
+export interface EffectEvent {
+  t: number;
+  scroll: number | null;
+  jumpMs: number;
+}
+
+export interface TimeRange {
+  lo: number;
+  hi: number;
+}
+
+/**
+ * effect (scroll / jump) による「表示位置 P(t)」の関数
+ */
+export class EffectMap {
+  readonly starts: number[];
+  readonly bases: number[];
+  readonly slopes: number[];
+  readonly negFrom: number;
+
+  static readonly none = new EffectMap([], [], [], Infinity);
+
+  constructor(starts: number[], bases: number[], slopes: number[], negFrom: number) {
+    this.starts = starts;
+    this.bases = bases;
+    this.slopes = slopes;
+    this.negFrom = negFrom;
+  }
+
+  get isEmpty(): boolean {
+    return this.starts.length === 0;
+  }
+
+  static make(events: EffectEvent[]): EffectMap {
+    if (events.length === 0) return EffectMap.none;
+    const sorted = [...events].sort((a, b) => a.t - b.t);
+    const merged: EffectEvent[] = [];
+    for (const e of sorted) {
+      const last = merged[merged.length - 1];
+      if (last && Math.abs(last.t - e.t) < 1e-9) {
+        if (e.scroll !== null) last.scroll = e.scroll;
+        last.jumpMs += e.jumpMs;
+      } else {
+        merged.push({ t: e.t, scroll: e.scroll, jumpMs: e.jumpMs });
+      }
+    }
+
+    const starts: number[] = [];
+    const bases: number[] = [];
+    const slopes: number[] = [];
+    let slope = 1.0;
+    let neg = Infinity;
+
+    for (const e of merged) {
+      let pHere: number;
+      if (starts.length > 0) {
+        const idx = starts.length - 1;
+        pHere = bases[idx] + slopes[idx] * (e.t - starts[idx]);
+      } else {
+        pHere = e.t;
+      }
+      if (e.scroll !== null) slope = e.scroll;
+      const jumpSec = (e.jumpMs / 1000) * slope;
+      if (slope < 0 || jumpSec < 0) neg = Math.min(neg, e.t);
+      starts.push(e.t);
+      bases.push(pHere + jumpSec);
+      slopes.push(slope);
+    }
+
+    return new EffectMap(starts, bases, slopes, neg);
+  }
+
+  private segmentAt(t: number): number | null {
+    if (this.starts.length === 0 || t < this.starts[0]) return null;
+    let lo = 0;
+    let hi = this.starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (this.starts[mid] <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  p(t: number): number {
+    const k = this.segmentAt(t);
+    if (k === null) return t;
+    return this.bases[k] + this.slopes[k] * (t - this.starts[k]);
+  }
+
+  scrollAt(t: number): number {
+    const k = this.segmentAt(t);
+    if (k === null) return 1.0;
+    return this.slopes[k];
+  }
+
+  timeRanges(lo: number, hi: number): TimeRange[] {
+    if (this.starts.length === 0) return [{ lo, hi }];
+    const first = this.starts[0];
+    const out: TimeRange[] = [];
+    if (lo < first) out.push({ lo, hi: Math.min(hi, first) });
+
+    for (let k = 0; k < this.starts.length; k++) {
+      const ts = this.starts[k];
+      const te = k + 1 < this.starts.length ? this.starts[k + 1] : Infinity;
+      const s = this.slopes[k];
+      const b = this.bases[k];
+      if (s === 0) {
+        if (b >= lo && b <= hi) out.push({ lo: ts, hi: te });
+        continue;
+      }
+      let t1 = ts + (lo - b) / s;
+      let t2 = ts + (hi - b) / s;
+      if (s < 0) {
+        const tmp = t1;
+        t1 = t2;
+        t2 = tmp;
+      }
+      const a = Math.max(t1, ts);
+      const c = Math.min(t2, te);
+      if (a <= c) out.push({ lo: a, hi: c });
+    }
+    return out;
+  }
+}
+
+3. src/core/ChartModel.ts
+
+import { Beat } from './Beat';
+
+export type NoteID = number;
+
+let noteIdCounter = 0;
+export function nextNoteID(): NoteID {
+  noteIdCounter += 1;
+  return noteIdCounter;
+}
+
+export interface Seg {
+  beat: Beat;
+  x: number;
+}
+
+export interface Note {
+  beat: Beat;
+  x: number;
+  w: number;
+  type?: number;
+  segs: Seg[];
+  extra: Record<string, unknown>;
+  id: NoteID;
+}
+
+export function isWipeNote(n: Note): boolean {
+  return n.type === 4;
+}
+
+export function isSlideNote(n: Note): boolean {
+  return n.segs.length > 0;
+}
+
+export function noteSpan(n: Note): { lo: number; hi: number } {
+  const s = n.beat.value;
+  let lo = s;
+  let hi = s;
+  for (const g of n.segs) {
+    const v = s + g.beat.value;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return { lo, hi };
+}
+
+export function cloneNote(n: Note, newId = false): Note {
+  return {
+    beat: n.beat,
+    x: n.x,
+    w: n.w,
+    type: n.type,
+    segs: n.segs.map((s) => ({ beat: s.beat, x: s.x })),
+    extra: structuredClone(n.extra),
+    id: newId ? nextNoteID() : n.id,
+  };
+}
+
+export interface TimePoint {
+  beat: Beat;
+  bpm: number;
+}
+
+export type EffectKind = 'scroll' | 'jump';
+
+export interface EffectPoint {
+  beat: Beat;
+  kind: EffectKind;
+  value: number;
+  extra: Record<string, unknown>;
+}
+
+export function formatEffectValue(value: number): string {
+  if (value === Math.round(value) && Math.abs(value) < 1e15) {
+    return String(Math.trunc(value));
+  }
+  return String(value);
+}
+
+/**
+ * beat <-> 秒 の変換 (BPM変化対応)
+ */
+export class TimeMap {
+  private readonly bs: number[] = [];
+  private readonly spb: number[] = [];
+  private readonly secs: number[] = [];
+
+  constructor(pts: TimePoint[]) {
+    let list = [...pts].sort((a, b) => Beat.compare(a.beat, b.beat));
+    if (list.length === 0) list = [{ beat: Beat.zero, bpm: 120 }];
+    let t = 0;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i].beat.value;
+      if (i > 0) t += (b - this.bs[i - 1]) * this.spb[i - 1];
+      this.bs.push(b);
+      this.spb.push(60.0 / Math.max(1.0, list[i].bpm));
+      this.secs.push(t);
+    }
+  }
+
+  private static lastIndexNotAfter(x: number, a: number[]): number {
+    let lo = 1;
+    let hi = a.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (a[mid] <= x) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo - 1;
+  }
+
+  secAtBeat(b: number): number {
+    const i = TimeMap.lastIndexNotAfter(b, this.bs);
+    return this.secs[i] + (b - this.bs[i]) * this.spb[i];
+  }
+
+  beatAtSec(s: number): number {
+    const i = TimeMap.lastIndexNotAfter(s, this.secs);
+    return this.bs[i] + (s - this.secs[i]) / this.spb[i];
+  }
+
+  indexAtBeat(b: number): number {
+    return TimeMap.lastIndexNotAfter(b, this.bs);
+  }
+
+  get firstSecPerBeat(): number {
+    return this.spb[0] ?? 0.5;
+  }
+}
+
+function asInt(v: unknown): number | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  return undefined;
+}
+
+function asDouble(v: unknown): number | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  return undefined;
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function noteFromJSON(dict: Record<string, unknown>): Note | null {
+  const b = Beat.fromJSON(dict.beat);
+  if (!b) return null;
+  const x = asInt(dict.x) ?? 0;
+  const w = asInt(dict.w) ?? 64;
+  const type = asInt(dict.type);
+  const segs: Seg[] = [];
+  if (Array.isArray(dict.seg)) {
+    for (const s of dict.seg) {
+      if (!isPlainObject(s)) continue;
+      const sb = Beat.fromJSON(s.beat);
+      if (sb) segs.push({ beat: sb, x: asInt(s.x) ?? 0 });
+    }
+  }
+  const extra: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(dict)) {
+    if (k !== 'beat' && k !== 'x' && k !== 'w' && k !== 'type' && k !== 'seg') {
+      extra[k] = v;
+    }
+  }
+  return { beat: b, x, w, type, segs, extra, id: nextNoteID() };
+}
+
+function noteToJSON(n: Note): Record<string, unknown> {
+  const d: Record<string, unknown> = { ...n.extra };
+  d.beat = n.beat.json;
+  d.x = n.x;
+  d.w = n.w;
+  if (n.type !== undefined && n.type !== 0) d.type = n.type;
+  if (n.segs.length > 0) {
+    d.seg = n.segs.map((s) => ({ beat: s.beat.json, x: s.x }));
+  }
+  return d;
+}
+
+/**
+ * キーを昇順に並べてコンパクトな JSON 文字列にする (Swift 版 JSONValue の書き出し仕様に合わせる)
+ */
+function stringifySorted(value: unknown): string {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'boolean' || typeof value === 'number') {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new Error('Cannot serialize non-finite number');
+    }
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return '[' + value.map((v) => stringifySorted(v)).join(',') + ']';
+  }
+  if (isPlainObject(value)) {
+    const keys = Object.keys(value).sort();
+    const parts: string[] = [];
+    for (const k of keys) {
+      const v = value[k];
+      if (v === undefined) continue;
+      parts.push(`${JSON.stringify(k)}:${stringifySorted(v)}`);
+    }
+    return '{' + parts.join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
+
+export class ChartData {
+  root: Record<string, unknown>;
+  times: TimePoint[];
+  private _notes: Note[];
+  soundEntries: Record<string, unknown>[];
+  effects: EffectPoint[];
+  otherEffects: Record<string, unknown>[];
+  hadEffectKey: boolean;
+  notesRevision = 0;
+
+  constructor(params: {
+    root: Record<string, unknown>;
+    times: TimePoint[];
+    notes: Note[];
+    soundEntries: Record<string, unknown>[];
+    effects?: EffectPoint[];
+    otherEffects?: Record<string, unknown>[];
+    hadEffectKey?: boolean;
+  }) {
+    this.root = params.root;
+    this.times = params.times;
+    this._notes = params.notes;
+    this.soundEntries = params.soundEntries;
+    this.effects = params.effects ?? [];
+    this.otherEffects = params.otherEffects ?? [];
+    this.hadEffectKey = params.hadEffectKey ?? false;
+  }
+
+  get notes(): Note[] {
+    return this._notes;
+  }
+
+  set notes(value: Note[]) {
+    this._notes = value;
+    this.notesRevision += 1;
+  }
+
+  bumpNotesRevision(): void {
+    this.notesRevision += 1;
+  }
+
+  static parse(jsonText: string): ChartData {
+    // 先頭 BOM 除去
+    const cleaned = jsonText.startsWith('\uFEFF') ? jsonText.slice(1) : jsonText;
+    const parsed: unknown = JSON.parse(cleaned);
+    if (!isPlainObject(parsed)) throw new Error('Invalid mc JSON');
+
+    const root: Record<string, unknown> = { ...parsed };
+
+    const times: TimePoint[] = [];
+    if (Array.isArray(root.time)) {
+      for (const e of root.time) {
+        if (!isPlainObject(e)) continue;
+        const b = Beat.fromJSON(e.beat);
+        const bpm = asDouble(e.bpm);
+        if (b && bpm !== undefined) times.push({ beat: b, bpm });
+      }
+    }
+    if (times.length === 0) times.push({ beat: Beat.zero, bpm: 120 });
+
+    const notes: Note[] = [];
+    const sounds: Record<string, unknown>[] = [];
+    if (Array.isArray(root.note)) {
+      for (const e of root.note) {
+        if (!isPlainObject(e)) continue;
+        if (e.sound !== undefined) {
+          sounds.push(e);
+        } else {
+          const n = noteFromJSON(e);
+          if (n) notes.push(n);
+        }
+      }
+    }
+
+    const effects: EffectPoint[] = [];
+    const others: Record<string, unknown>[] = [];
+    const hadKey = root.effect !== undefined;
+    if (Array.isArray(root.effect)) {
+      for (const e of root.effect) {
+        if (!isPlainObject(e)) continue;
+        const b = Beat.fromJSON(e.beat);
+        if (!b) {
+          others.push(e);
+          continue;
+        }
+        const rest: Record<string, unknown> = { ...e };
+        delete rest.beat;
+        let found = false;
+        const sv = asDouble(e.scroll);
+        if (sv !== undefined) {
+          delete rest.scroll;
+          effects.push({ beat: b, kind: 'scroll', value: sv, extra: {} });
+          found = true;
+        }
+        const jv = asDouble(e.jump);
+        if (jv !== undefined) {
+          delete rest.jump;
+          effects.push({ beat: b, kind: 'jump', value: jv, extra: {} });
+          found = true;
+        }
+        if (!found) {
+          others.push(e);
+          continue;
+        }
+        if (Object.keys(rest).length > 0 && effects.length > 0) {
+          effects[effects.length - 1].extra = rest;
+        }
+      }
+    }
+
+    delete root.note;
+    delete root.time;
+    delete root.effect;
+
+    return new ChartData({
+      root,
+      times,
+      notes,
+      soundEntries: sounds,
+      effects,
+      otherEffects: others,
+      hadEffectKey: hadKey,
+    });
+  }
+
+  serialized(): string {
+    const sortedNotes = [...this._notes].sort((a, b) => Beat.compare(a.beat, b.beat));
+    const noteObjects = sortedNotes.map(noteToJSON).concat(this.soundEntries);
+
+    const sortedEffects = [...this.effects]
+      .sort((a, b) => Beat.compare(a.beat, b.beat))
+      .map((e) => ({
+        ...e.extra,
+        beat: e.beat.json,
+        [e.kind]: e.value,
+      }));
+    const fxObjects = sortedEffects.concat(this.otherEffects);
+    const writeEffect = fxObjects.length > 0 || this.hadEffectKey;
+
+    const out: Record<string, unknown> = { ...this.root };
+    out.time = [...this.times]
+      .sort((a, b) => Beat.compare(a.beat, b.beat))
+      .map((t) => ({ beat: t.beat.json, bpm: t.bpm }));
+    out.note = noteObjects;
+    if (writeEffect) out.effect = fxObjects;
+    else delete out.effect;
+
+    return stringifySorted(out);
+  }
+
+  cloneForSnapshot(): { notes: Note[]; times: TimePoint[]; effects: EffectPoint[] } {
+    return {
+      notes: this._notes.map((n) => cloneNote(n, false)),
+      times: this.times.map((t) => ({ beat: t.beat, bpm: t.bpm })),
+      effects: this.effects.map((e) => ({
+        beat: e.beat,
+        kind: e.kind,
+        value: e.value,
+        extra: structuredClone(e.extra),
+      })),
+    };
+  }
+
+  // MARK: メタデータ
+
+  metaString(path: string[]): string {
+    let cur: unknown = this.root.meta;
+    for (const k of path) {
+      if (!isPlainObject(cur)) return '';
+      cur = cur[k];
+    }
+    return typeof cur === 'string' ? cur : '';
+  }
+
+  setMetaString(path: string[], v: string): void {
+    const meta: Record<string, unknown> = isPlainObject(this.root.meta)
+      ? { ...this.root.meta }
+      : {};
+    if (path.length === 1) {
+      meta[path[0]] = v;
+    } else if (path.length === 2) {
+      const sub: Record<string, unknown> = isPlainObject(meta[path[0]])
+        ? { ...(meta[path[0]] as Record<string, unknown>) }
+        : {};
+      sub[path[1]] = v;
+      meta[path[0]] = sub;
+    }
+    this.root.meta = meta;
+  }
+
+  get soundFile(): string {
+    const v = this.soundEntries[0]?.sound;
+    return typeof v === 'string' ? v : '';
+  }
+
+  set soundFile(newValue: string) {
+    if (this.soundEntries.length === 0) {
+      this.soundEntries = [{ beat: [0, 0, 1], sound: newValue, vol: 100, offset: 0, type: 1 }];
+    } else {
+      this.soundEntries[0].sound = newValue;
+    }
+  }
+
+  get offsetMs(): number {
+    return asInt(this.soundEntries[0]?.offset) ?? 0;
+  }
+
+  set offsetMs(newValue: number) {
+    if (this.soundEntries.length === 0) {
+      this.soundEntries = [{ beat: [0, 0, 1], sound: '', vol: 100, offset: newValue, type: 1 }];
+    } else {
+      this.soundEntries[0].offset = newValue;
+    }
+  }
+
+  testInt(key: string): number | undefined {
+    const extra = this.root.extra;
+    if (!isPlainObject(extra)) return undefined;
+    const test = extra.test;
+    if (!isPlainObject(test)) return undefined;
+    return asInt(test[key]);
+  }
+
+  setTest(key: string, value: number): void {
+    const extra: Record<string, unknown> = isPlainObject(this.root.extra)
+      ? { ...this.root.extra }
+      : {};
+    const test: Record<string, unknown> = isPlainObject(extra.test)
+      ? { ...extra.test }
+      : {};
+    test[key] = Math.trunc(value);
+    extra.test = test;
+    this.root.extra = extra;
+  }
+}
+
+4. src/core/NoteIndex.ts
+
+import type { Note, NoteID } from './ChartModel';
+
+/**
+ * ノーツを「拍の範囲」で素早く探すための空間索引 (二分木)
+ */
+export class NoteIndex {
+  private los: number[] = [];
+  private his: number[] = [];
+  private order: number[] = [];
+  private maxHi: number[] = [];
+  private spatialBuilt = false;
+  private builtCount = -1;
+  private idMap: Map<NoteID, number> | null = null;
+
+  private buildSpatial(notes: Note[]): void {
+    this.spatialBuilt = true;
+    this.builtCount = notes.length;
+
+    const ents: { lo: number; hi: number; idx: number }[] = new Array(notes.length);
+    for (let i = 0; i < notes.length; i++) {
+      const n = notes[i];
+      const s = n.beat.value;
+      let lo = s;
+      let hi = s;
+      for (const g of n.segs) {
+        const v = s + g.beat.value;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      ents[i] = { lo, hi, idx: i };
+    }
+
+    ents.sort((a, b) => (a.lo !== b.lo ? a.lo - b.lo : a.idx - b.idx));
+
+    this.los = ents.map((e) => e.lo);
+    this.his = ents.map((e) => e.hi);
+    this.order = ents.map((e) => e.idx);
+    this.maxHi = new Array(ents.length).fill(-Infinity);
+    this.build(0, ents.length);
+  }
+
+  private build(l: number, r: number): number {
+    if (l >= r) return -Infinity;
+    const m = (l + r) >> 1;
+    const a = this.build(l, m);
+    const b = this.build(m + 1, r);
+    const v = Math.max(this.his[m], a, b);
+    this.maxHi[m] = v;
+    return v;
+  }
+
+  indices(lo: number, hi: number, notes: Note[]): number[] {
+    const out: number[] = [];
+    if (notes.length === 0 || hi < lo || Number.isNaN(lo) || Number.isNaN(hi)) return out;
+    if (!this.spatialBuilt || this.builtCount !== notes.length) {
+      this.buildSpatial(notes);
+    }
+    this.collect(0, notes.length, lo, hi, out);
+    out.sort((a, b) => a - b);
+    return out;
+  }
+
+  private collect(l: number, r: number, qLo: number, qHi: number, out: number[]): void {
+    if (l >= r) return;
+    const m = (l + r) >> 1;
+    if (this.maxHi[m] < qLo) return;
+    this.collect(l, m, qLo, qHi, out);
+    if (this.los[m] > qHi) return;
+    if (this.his[m] >= qLo) out.push(this.order[m]);
+    this.collect(m + 1, r, qLo, qHi, out);
+  }
+
+  positionOfID(id: NoteID, notes: Note[]): number | undefined {
+    if (!this.idMap) {
+      const m = new Map<NoteID, number>();
+      for (let i = notes.length - 1; i >= 0; i--) {
+        m.set(notes[i].id, i);
+      }
+      this.idMap = m;
+    }
+    return this.idMap.get(id);
+  }
+}
+
+5. src/core/SeekDensity.ts
+
+import type { Note, TimeMap } from './ChartModel';
+
+export const SeekDensity = {
+  binCount: 120,
+  levelCap: 20,
+
+  counts(notes: Note[], timeMap: TimeMap, totalSec: number): number[] {
+    const out = new Array<number>(this.binCount).fill(0);
+    if (!(totalSec > 0)) return out;
+    const scale = this.binCount / totalSec;
+    const last = this.binCount - 1;
+
+    for (const n of notes) {
+      const beat = n.beat.value;
+      if (!Number.isFinite(beat)) continue;
+      const sec = timeMap.secAtBeat(beat);
+      if (!Number.isFinite(sec) || sec < 0 || sec > totalSec) continue;
+      let k = Math.trunc(sec * scale);
+      if (k > last) k = last;
+      out[k] += 1;
+    }
+    return out;
+  },
+
+  ratios(counts: number[]): number[] {
+    const capped = counts.map((c) => Math.min(c, this.levelCap));
+    const peak = capped.reduce((m, v) => Math.max(m, v), 0);
+    if (peak <= 0) return new Array<number>(counts.length).fill(0);
+    return capped.map((v) => v / peak);
+  },
+};
+
+6. src/core/DemoChart.ts
+
+export function createDemoChartJSON(): string {
+  const beat = (m: number, n = 0, d = 1): [number, number, number] => [m, n, d];
+  const notes: Record<string, unknown>[] = [];
+
+  for (let i = 0; i < 64; i++) {
+    const x = 24 + ((i * 53) % 208);
+    notes.push({ beat: beat(i), x, w: 48 });
+    if (i % 4 === 2) {
+      notes.push({ beat: beat(i, 1, 2), x: 255 - x, w: 40 });
+    }
+  }
+
+  const segs = [
+    { beat: beat(1), x: 40 },
+    { beat: beat(2), x: 100 },
+    { beat: beat(3), x: 60 },
+  ];
+  for (let k = 0; k < 4; k++) {
+    notes.push({ beat: beat(8 + k * 12), x: 60, w: 48, seg: segs });
+  }
+
+  notes.push({ beat: beat(30), x: 128, w: 200, type: 4 });
+
+  const root = {
+    meta: {
+      mode: 5,
+      version: 'Demo',
+      creator: 'demo',
+      background: '',
+      song: { title: 'Demo Chart', artist: 'Demo', id: 0 },
+    },
+    time: [
+      { beat: beat(0), bpm: 150 },
+      { beat: beat(16), bpm: 180 },
+      { beat: beat(32), bpm: 120.5 },
+      { beat: beat(48), bpm: 200 },
+    ],
+    effect: [
+      { beat: beat(0), scroll: 1.0 },
+      { beat: beat(8), scroll: 1.5 },
+      { beat: beat(24), scroll: 0.5 },
+      { beat: beat(40), jump: 500 },
+      { beat: beat(56), scroll: 1.0 },
+    ],
+    note: notes,
+  };
+
+  return JSON.stringify(root);
+}
+
+7. src/core/MCZArchive.ts
+
+import JSZip from 'jszip';
+import { ChartData } from './ChartModel';
+
+export interface MCZChartEntry {
+  name: string;
+  label: string;
+  text: string;
+}
+
+export interface MCZUnpacked {
+  folderName: string;
+  files: Map<string, Uint8Array>;
+  fileNames: string[];
+  charts: MCZChartEntry[];
+}
+
+const AUDIO_EXTS = new Set(['ogg', 'mp3', 'wav', 'm4a', 'aac', 'flac', 'aif', 'aiff', 'caf', 'webm']);
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif']);
+
+export type ImportFileKind = 'mc' | 'audio' | 'image' | 'mcz';
+
+export function detectFileKind(fileName: string, mimeType = ''): ImportFileKind | null {
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'mc') return 'mc';
+  if (ext === 'mcz') return 'mcz';
+  if (AUDIO_EXTS.has(ext) || mimeType.startsWith('audio/')) return 'audio';
+  if (IMAGE_EXTS.has(ext) || mimeType.startsWith('image/')) return 'image';
+  return null;
+}
+
+function chartLabel(text: string): string {
+  try {
+    const obj = JSON.parse(text.startsWith('\uFEFF') ? text.slice(1) : text) as Record<string, unknown>;
+    const meta = obj.meta as Record<string, unknown> | undefined;
+    if (!meta) return '';
+    const parts: string[] = [];
+    if (typeof meta.version === 'string' && meta.version) parts.push(meta.version);
+    if (typeof meta.creator === 'string' && meta.creator) parts.push(`by ${meta.creator}`);
+    return parts.join('  ');
+  } catch {
+    return '';
+  }
+}
+
+export async function unpackMCZ(data: ArrayBuffer | Uint8Array, mczName: string): Promise<MCZUnpacked> {
+  const zip = await JSZip.loadAsync(data);
+  const files = new Map<string, Uint8Array>();
+  const charts: MCZChartEntry[] = [];
+
+  for (const [entryPath, entry] of Object.entries(zip.files)) {
+    if (entry.dir) continue;
+    const parts = entryPath.split(/[/\\]/).filter(Boolean);
+    const leaf = parts[parts.length - 1];
+    if (!leaf || leaf === '.' || leaf === '..') continue;
+    if (parts.includes('__MACOSX') || leaf.startsWith('._') || leaf === '.DS_Store') continue;
+    if (files.has(leaf)) continue;
+
+    const bytes = await entry.async('uint8array');
+    files.set(leaf, bytes);
+
+    if (leaf.toLowerCase().endsWith('.mc')) {
+      const text = new TextDecoder('utf-8').decode(bytes);
+      charts.push({ name: leaf, label: chartLabel(text), text });
+    }
+  }
+
+  const fileNames = Array.from(files.keys()).sort((a, b) => a.localeCompare(b));
+  charts.sort((a, b) => a.name.localeCompare(b.name));
+
+  const folderName = mczName.replace(/\.[^.]+$/, '') || 'chart';
+  return { folderName, files, fileNames, charts };
+}
+
+export function pickMediaForChart(
+  chartText: string,
+  fileNames: string[]
+): { audioName: string | null; imageName: string | null } {
+  let wantAudio = '';
+  let wantImage = '';
+  try {
+    const c = ChartData.parse(chartText);
+    wantAudio = c.soundFile;
+    wantImage = c.metaString(['background']);
+  } catch {
+    // ignore
+  }
+
+  const find = (want: string, kind: 'audio' | 'image'): string | null => {
+    const leaf = want.split(/[/\\]/).pop()?.toLowerCase() ?? '';
+    if (leaf) {
+      const exact = fileNames.find((n) => n.toLowerCase() === leaf);
+      if (exact) return exact;
+    }
+    return fileNames.find((n) => detectFileKind(n) === kind) ?? null;
+  };
+
+  return {
+    audioName: find(wantAudio, 'audio'),
+    imageName: find(wantImage, 'image'),
+  };
+}
+
+export async function exportMCZBlob(params: {
+  chart: ChartData;
+  mcName: string;
+  audioData?: Uint8Array | null;
+  audioFileName?: string;
+  bgData?: Uint8Array | null;
+  bgFileName?: string;
+}): Promise<{ blob: Blob; fileName: string }> {
+  const zip = new JSZip();
+  const base = params.mcName.replace(/\.[^.]+$/, '') || 'chart';
+  const folder = zip.folder(base)!;
+
+  folder.file(params.mcName, params.chart.serialized());
+
+  if (params.audioData) {
+    const n = params.chart.soundFile || params.audioFileName || 'song.ogg';
+    folder.file(n, params.audioData);
+  }
+  if (params.bgData) {
+    const bn = params.chart.metaString(['background']) || params.bgFileName || 'bg.jpg';
+    folder.file(bn, params.bgData);
+  }
+
+  let title = params.chart.metaString(['song', 'title']) || base;
+  title = title.replace(/[/\\:*?"<>|]/g, '_');
+
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+  return { blob, fileName: `${title}.mcz` };
+}
+
+次のステップの進め方
+
+これで Phase 1 の土台が揃いました！次にどう進めましょうか？
+
+1.  このまま私と Phase 2（オーディオエンジン：AudioEngine.ts + TimeStretch.ts + KeySound.ts）へ進む
+    「Phase 2 をお願いします」と言っていただければ、Web Audio API で .ogg
+    等を再生し、0.75/0.5/0.25/0.1倍速のタイムストレッチやサンプル精度のキー音予約ができるエンジン一式を書き起こします。
+2.  Google AI Studio Build モード / Sonnet 5.5 と分担して進める 今お渡ししたアーキテクチャ構成と Phase 1
+    コードをワークスペースに置き、「app_core.txt の AudioController.swift / TimeStretch.swift /
+    KeySound.swift を src/audio/ に移植して」のようにフェーズごとに指示を出せば、Sonnet
+    系モデルでも非常に高い精度で続きを書けます。
+

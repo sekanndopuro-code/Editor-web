@@ -1,0 +1,6 @@
+{
+  "name": "Malody Slide Editor",
+  "description": "Web port of the Malody Slide chart editor preserving the exact iPad/Swift visual design and layout.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

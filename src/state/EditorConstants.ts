@@ -71,6 +71,47 @@ export const DesignScreen = {
   },
 } as const;
 
+/**
+ * ノーツ (タップ / ワイプ) の縦幅の倍率。見た目と当たり判定の両方に使う。
+ * 100% が従来の大きさ (最小)、240% まで伸ばせる。
+ * 下端 (タイミング線のすぐ上) は動かさず、上方向へ伸ばす。
+ */
+export const NoteHeightConstants = {
+  min: 1.0,
+  max: 2.4,
+  step: 0.05,
+  tapH: 11.5, // Renderers.swift :: LaneRenderer.tapH
+  wipeHalfH: 6.0, // Renderers.swift :: LaneRenderer.drawWipe (h)
+  barLift: 8.0, // Renderers.swift :: LaneRenderer.barLift
+  hitHalfH: 14.0, // EditorState+Tools.swift :: noteHit tolerance 14
+
+  clamp(v: number): number {
+    if (!Number.isFinite(v)) return this.min;
+    return Math.min(Math.max(v, this.min), this.max);
+  },
+
+  /** タップの高さ (px) */
+  tapHeight(scale: number): number {
+    return this.tapH * scale;
+  },
+
+  /** ワイプの半分の高さ (px) */
+  wipeHalfHeight(scale: number): number {
+    return this.wipeHalfH * scale;
+  },
+
+  /** ノーツの中心を、拍の線から上へ持ち上げる量 (下端の位置が変わらないようにする) */
+  lift(isWipe: boolean, scale: number): number {
+    const half = isWipe ? this.wipeHalfH : this.tapH / 2;
+    return this.barLift + (scale - 1) * half;
+  },
+
+  /** 当たり判定の上下の半分の幅 (px) */
+  hitHalf(scale: number): number {
+    return this.hitHalfH * scale;
+  },
+} as const;
+
 export const UIAdjustConstants = {
   stripWidthDefault: 145, // UIAdjust.swift :: UIAdjust.stripWidthDefault
   stripWidthMax: 145 * 3, // UIAdjust.swift :: UIAdjust.stripWidthMax

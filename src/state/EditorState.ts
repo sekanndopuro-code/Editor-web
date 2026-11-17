@@ -34,7 +34,7 @@ import type {
   PluginSprite,
   WorkerPatch,
 } from '../plugins/PluginTypes';
-import { DesignScreen, UIAdjustConstants } from './EditorConstants';
+import { DesignScreen, NoteHeightConstants, UIAdjustConstants } from './EditorConstants';
 import { EditorSessionStorage, type SessionSaveResult } from './EditorSessionStorage';
 
 export type EditTool =
@@ -112,13 +112,23 @@ export class LaneGeo {
   viewBeat: number;
   ppb: number;
   fx: FXWarp | null;
+  /** ノーツ (タップ / ワイプ) の縦幅の倍率 (1.0 = 従来の大きさ) */
+  noteScale: number;
 
-  constructor(W: number, H: number, viewBeat: number, ppb: number, fx: FXWarp | null = null) {
+  constructor(
+    W: number,
+    H: number,
+    viewBeat: number,
+    ppb: number,
+    fx: FXWarp | null = null,
+    noteScale = 1.0
+  ) {
     this.W = W;
     this.H = H;
     this.viewBeat = viewBeat;
     this.ppb = ppb;
     this.fx = fx;
+    this.noteScale = noteScale;
   }
 
   get trackL(): number {
@@ -229,6 +239,7 @@ export class EditorState {
   private _bgDim = 0.7; // EditorState.swift :: EditorState.bgDim
   private _musicVolume = 1.0; // EditorState.swift :: EditorState.musicVolume
   private _noteVolume = 0.8; // EditorState.swift :: EditorState.noteVolume
+  private _noteHeightScale: number = NoteHeightConstants.min; // ノーツの縦幅 (100% 〜 240%)
 
   // View & Control State
   private _viewBeat = 0; // EditorState.swift :: EditorState.viewBeat
@@ -421,6 +432,9 @@ export class EditorState {
     const noteVol = EditorState.readStoredNumber('editor.noteVolume');
     if (noteVol !== null) this._noteVolume = Math.min(Math.max(noteVol, 0), 1);
 
+    const noteH = EditorState.readStoredNumber('editor.noteHeightScale');
+    if (noteH !== null) this._noteHeightScale = NoteHeightConstants.clamp(noteH);
+
     const bgDim = EditorState.readStoredNumber('editor.bgDim');
     if (bgDim !== null) this._bgDim = Math.min(Math.max(bgDim, 0), 0.95);
 
@@ -498,6 +512,14 @@ export class EditorState {
     EditorState.writeStoredSetting('editor.noteVolume', this._noteVolume);
     this.applyVolumes();
     this.emitUI();
+  }
+
+  get noteHeightScale(): number { return this._noteHeightScale; }
+  set noteHeightScale(v: number) {
+    this._noteHeightScale = NoteHeightConstants.clamp(v);
+    EditorState.writeStoredSetting('editor.noteHeightScale', this._noteHeightScale);
+    this.emitUI();
+    this.emitFrame();
   }
 
   get bgDim(): number { return this._bgDim; }
@@ -853,7 +875,7 @@ export class EditorState {
     // EditorState.swift :: EditorState.geo(_:)
     const ppb = height / this.visibleBeats;
     const fx = this.fxMode ? new FXWarp(this.fxEffectMap, this.timeMap, this.currentSec()) : null;
-    return new LaneGeo(width, height, this.currentBeat(), ppb, fx);
+    return new LaneGeo(width, height, this.currentBeat(), ppb, fx, this._noteHeightScale);
   }
 
   timeString(sec: number): string {
@@ -2437,7 +2459,8 @@ export class EditorState {
     let found = 0;
     let added = 0;
     for (const n of this.chart.notes) {
-      const yHead = g.py(n.beat.value) - (isSlideNote(n) ? 0 : BAR_LIFT);
+      const yHead =
+        g.py(n.beat.value) - (isSlideNote(n) ? 0 : NoteHeightConstants.lift(isWipeNote(n), g.noteScale));
       let hit = inside({ x: g.px(n.x), y: yHead });
       if (!hit) {
         for (const s of n.segs) {
@@ -2498,7 +2521,8 @@ export class EditorState {
       return null;
     }
     const b = g.beatOf(p.y);
-    const m = (32.0 + BAR_LIFT) / ppb; // EditorState+Tools.swift :: hitNote margin 32.0 + barLift
+    // EditorState+Tools.swift :: hitNote margin 32.0 + barLift (縦幅を伸ばした分だけ広げる)
+    const m = (32.0 + BAR_LIFT + (g.noteScale - 1) * 20.0) / ppb;
     const list = this.notesOverlapping(b - m, b + m);
     for (let k = list.length - 1; k >= 0; k--) {
       const i = list[k];
@@ -2513,8 +2537,11 @@ export class EditorState {
     const cx = g.px(n.x);
     const minHitW = 8; // EditorState+Tools.swift :: minHitW
     const hw = (Math.max(n.w, minHitW) / 255.0) * g.trackW * 0.5;
-    const yBar = isSlideNote(n) ? y0 : y0 - BAR_LIFT;
-    if (Math.abs(p.y - yBar) <= 14 && Math.abs(p.x - cx) <= hw + 6) return true; // EditorState+Tools.swift :: hit tolerance 14 / +6
+    const slide = isSlideNote(n);
+    // タップ / ワイプだけ、見た目と同じ倍率で当たり判定の縦幅を広げる (スライドは従来どおり)
+    const yBar = slide ? y0 : y0 - NoteHeightConstants.lift(isWipeNote(n), g.noteScale);
+    const tolY = slide ? NoteHeightConstants.hitHalfH : NoteHeightConstants.hitHalf(g.noteScale);
+    if (Math.abs(p.y - yBar) <= tolY && Math.abs(p.x - cx) <= hw + 6) return true; // EditorState+Tools.swift :: hit tolerance 14 / +6
     if (isSlideNote(n)) {
       const pts: Point2D[] = [{ x: cx, y: y0 }];
       for (const s of n.segs) {

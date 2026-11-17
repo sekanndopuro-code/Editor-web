@@ -127,6 +127,10 @@ export async function exportMCZBlob(params: {
   let title = params.chart.metaString(['song', 'title']) || base;
   title = title.replace(/[/\\:*?"<>|]/g, '_');
 
-  const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+  // JSZip の 'blob' 出力は MIME が application/zip になり、Safari などが
+  // ダウンロード時に ".mcz.zip" と拡張子を足してしまう。
+  // 汎用バイナリ扱い (application/octet-stream) にして ".mcz" のまま保存させる。
+  const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'STORE' });
+  const blob = new Blob([bytes], { type: 'application/octet-stream' });
   return { blob, fileName: `${title}.mcz` };
 }

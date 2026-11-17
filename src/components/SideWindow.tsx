@@ -6,6 +6,7 @@ import { EffectKind, formatEffectValue } from '../core/ChartModel';
 import { BACKGROUND_MAX_LONG_SIDE, prepareBackgroundImage } from '../core/ImageNormalize';
 import {
   DesignScreen,
+  NoteHeightConstants,
   SwiftColors,
   panelLabelFontCss,
 } from '../state/EditorConstants';
@@ -1452,6 +1453,24 @@ const SettingWindowContent: React.FC<{
             () => {
               state.touchEffect = !state.touchEffect;
             }
+          )}
+
+          <SideDivider />
+
+          {/* ノーツの縦幅 (見た目と当たり判定) */}
+          {sliderRow(
+            'ノーツの縦幅',
+            percent(state.noteHeightScale),
+            state.noteHeightScale,
+            NoteHeightConstants.min,
+            NoteHeightConstants.max,
+            NoteHeightConstants.step,
+            (v) => {
+              state.noteHeightScale = v;
+            }
+          )}
+          {noteText(
+            'タップとワイプの縦の太さを、見た目と当たり判定の両方で変えます。100% が今までの大きさで、240% まで伸ばせます。スマホで細くて触りにくいときに大きくしてください。スライドのノーツは変わりません。'
           )}
 
           <SideDivider />

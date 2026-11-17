@@ -1,13 +1,11 @@
 // Renderers.swift :: LaneRenderer
 import { isSlideNote, isWipeNote, type Note, type NoteID } from '../core/ChartModel';
-import { SwiftColors, rgba01 } from '../state/EditorConstants';
+import { NoteHeightConstants, SwiftColors, rgba01 } from '../state/EditorConstants';
 import type { EditorState, Ghost, LaneGeo, Point2D } from '../state/EditorState';
 import { PluginStore } from '../plugins/PluginStore';
 import {
-  BAR_LIFT,
   DRAW_SEG_RINGS,
   DRAW_SLIDE_HEAD_BAR,
-  TAP_H,
   drawBPM,
   drawEffects,
   drawHLines,
@@ -143,15 +141,17 @@ function drawNotes(
 
   for (const n of notes) {
     if (isSlideNote(n) && !DRAW_SLIDE_HEAD_BAR) continue;
-    const y = g.py(n.beat.value) - BAR_LIFT;
+    const wipe = isWipeNote(n);
+    const y = g.py(n.beat.value) - NoteHeightConstants.lift(wipe, g.noteScale);
     if (y < -24 || y > g.H + 24) continue; // Renderers.swift :: LaneRenderer.drawNotes
     const hw = ((n.w / 255.0) * g.trackW) / 2.0;
     const cx = g.px(n.x);
     const isSel = selected.size > 0 && selected.has(n.id);
-    if (isWipeNote(n)) {
-      drawWipe(ctx, cx - hw, cx + hw, y, isSel);
+    if (wipe) {
+      drawWipe(ctx, cx - hw, cx + hw, y, isSel, g.noteScale);
     } else {
-      drawTap(ctx, cx - hw, y - TAP_H / 2, hw * 2, TAP_H, isSel);
+      const th = NoteHeightConstants.tapHeight(g.noteScale);
+      drawTap(ctx, cx - hw, y - th / 2, hw * 2, th, isSel);
     }
   }
 

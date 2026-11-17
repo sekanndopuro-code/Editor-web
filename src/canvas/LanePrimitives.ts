@@ -315,7 +315,8 @@ export function drawWipe(
   xL: number,
   xR: number,
   yMid: number,
-  selected: boolean
+  selected: boolean,
+  scale = 1.0
 ): void {
   // Renderers.swift :: LaneRenderer.drawWipe
   const outer = selected ? SwiftColors.selWipeOuter : SwiftColors.wipeOuter;
@@ -323,7 +324,7 @@ export function drawWipe(
   const core = selected ? SwiftColors.selWipeCore : SwiftColors.wipeCore;
   const glow = selected ? SwiftColors.selWipeGlow : SwiftColors.wipeGlow;
 
-  const h = 6.0; // Renderers.swift :: LaneRenderer.drawWipe
+  const h = 6.0 * scale; // Renderers.swift :: LaneRenderer.drawWipe (縦幅の倍率つき)
   const cap = 4.0; // Renderers.swift :: LaneRenderer.drawWipe
   const bx0 = xL + cap;
   const bx1 = xR - cap;
@@ -353,12 +354,13 @@ export function drawWipe(
 
   ctx.save();
   ctx.beginPath();
-  ctx.moveTo(xL + 3.2, yMid - 4.5); // Renderers.swift :: LaneRenderer.drawWipe (left arrow)
+  const ah = 4.5 * scale; // 矢印の縦の長さも倍率に合わせる
+  ctx.moveTo(xL + 3.2, yMid - ah); // Renderers.swift :: LaneRenderer.drawWipe (left arrow)
   ctx.lineTo(xL + 0.8, yMid);
-  ctx.lineTo(xL + 3.2, yMid + 4.5);
-  ctx.moveTo(xR - 3.2, yMid - 4.5); // Renderers.swift :: LaneRenderer.drawWipe (right arrow)
+  ctx.lineTo(xL + 3.2, yMid + ah);
+  ctx.moveTo(xR - 3.2, yMid - ah); // Renderers.swift :: LaneRenderer.drawWipe (right arrow)
   ctx.lineTo(xR - 0.8, yMid);
-  ctx.lineTo(xR - 3.2, yMid + 4.5);
+  ctx.lineTo(xR - 3.2, yMid + ah);
   ctx.strokeStyle = outer;
   ctx.lineWidth = 1.6; // Renderers.swift :: LaneRenderer.drawWipe
   ctx.lineCap = 'butt';

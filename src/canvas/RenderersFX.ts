@@ -1,10 +1,8 @@
 // RenderersFX.swift :: FX mode lane rendering
 import { isSlideNote, isWipeNote } from '../core/ChartModel';
-import { SwiftColors } from '../state/EditorConstants';
+import { NoteHeightConstants, SwiftColors } from '../state/EditorConstants';
 import type { EditorState, FXWarp, LaneGeo } from '../state/EditorState';
 import {
-  BAR_LIFT,
-  TAP_H,
   drawBPM,
   drawEffects,
   drawHLines,
@@ -199,14 +197,16 @@ function drawFXNotes(
     const n = notes[i];
     const t = f.time.secAtBeat(n.beat.value);
     if (t < keep - 1e-4) continue;
-    const y = yOf(f.map.p(t)) - BAR_LIFT;
+    const wipe = isWipeNote(n);
+    const y = yOf(f.map.p(t)) - NoteHeightConstants.lift(wipe, g.noteScale);
     if (y < -24 || y > g.H + 24) continue; // RenderersFX.swift :: drawFXNotes
     const hw = ((n.w / 255.0) * g.trackW) / 2.0;
     const cx = g.px(n.x);
-    if (isWipeNote(n)) {
-      drawWipe(ctx, cx - hw, cx + hw, y, false);
+    if (wipe) {
+      drawWipe(ctx, cx - hw, cx + hw, y, false, g.noteScale);
     } else {
-      drawTap(ctx, cx - hw, y - TAP_H / 2, hw * 2, TAP_H, false);
+      const th = NoteHeightConstants.tapHeight(g.noteScale);
+      drawTap(ctx, cx - hw, y - th / 2, hw * 2, th, false);
     }
     bars += 1;
   }

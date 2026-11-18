@@ -20,6 +20,13 @@ export interface LoadedEditorSession {
   bg: { fileName: string; data: Uint8Array } | null;
 }
 
+/** 設定画面の「保存データ」用。中身は読み出さず、名前とサイズだけ。 */
+export interface SessionStorageSummary {
+  chart: { name: string; bytes: number; updatedAt: number } | null;
+  audio: { fileName: string; bytes: number } | null;
+  bg: { fileName: string; bytes: number } | null;
+}
+
 export type SessionSaveResult =
   | { ok: true }
   | { ok: false; quotaExceeded: boolean; message: string };
@@ -228,6 +235,58 @@ export const EditorSessionStorage = {
                     fileName: typeof rawBg.fileName === 'string' ? rawBg.fileName : '',
                     data: new Uint8Array(rawBg.data),
                   }
+                : null,
+          });
+        };
+        tx.onerror = () => finish(null);
+        tx.onabort = () => finish(null);
+      } catch {
+        finish(null);
+      }
+    });
+  },
+
+  async getSummary(): Promise<SessionStorageSummary | null> {
+    const { db } = await openDB();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value: SessionStorageSummary | null) => {
+        if (settled) return;
+        settled = true;
+        try {
+          db.close();
+        } catch {
+          // Ignore close errors
+        }
+        resolve(value);
+      };
+      try {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const chartReq = store.get(KEY_CHART);
+        const audioReq = store.get(KEY_AUDIO);
+        const bgReq = store.get(KEY_BG);
+        tx.oncomplete = () => {
+          const chart = chartReq.result as StoredSessionChart | undefined;
+          const audio = audioReq.result as StoredSessionMedia | undefined;
+          const bg = bgReq.result as StoredSessionMedia | undefined;
+          finish({
+            chart:
+              chart && typeof chart.mcText === 'string'
+                ? {
+                    name: typeof chart.mcName === 'string' ? chart.mcName : 'chart.mc',
+                    bytes: new Blob([chart.mcText]).size,
+                    updatedAt: typeof chart.updatedAt === 'number' ? chart.updatedAt : 0,
+                  }
+                : null,
+            audio:
+              audio && audio.data instanceof ArrayBuffer
+                ? { fileName: typeof audio.fileName === 'string' ? audio.fileName : '', bytes: audio.data.byteLength }
+                : null,
+            bg:
+              bg && bg.data instanceof ArrayBuffer
+                ? { fileName: typeof bg.fileName === 'string' ? bg.fileName : '', bytes: bg.data.byteLength }
                 : null,
           });
         };

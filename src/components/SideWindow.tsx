@@ -11,6 +11,7 @@ import {
   panelLabelFontCss,
 } from '../state/EditorConstants';
 import type { EditorState, SidePanel } from '../state/EditorState';
+import { StorageManager } from './StorageManager';
 
 const SIDE_WINDOW_WIDTH = 445.5; // SideWindow.swift :: SideWindow.width
 const SIDE_WINDOW_WIDTH_MAX_RATIO = 0.62; // SideWindow.swift :: SidePanelLayer (size.width * 0.62)
@@ -1576,6 +1577,11 @@ const SettingWindowContent: React.FC<{
           {noteText(
             '描画は譜面データに忠実なので、データの端が x: 0〜255 の外にあるノーツは、そのまま外へ描かれます (Malody から持ってきた譜面や、プラグインが置いたノーツに多い)。「枠に収める」は、幅は変えずに中心を内側へ寄せて収めます。Undo で戻せます。'
           )}
+
+          <SideDivider />
+
+          {/* 保存データの一覧・消える条件・個別削除 */}
+          <StorageManager state={state} fontBoost={fontBoost} />
 
           {/* SideWindow.swift :: SettingWindowContent.playInfoText */}
           {state.playInfo && (

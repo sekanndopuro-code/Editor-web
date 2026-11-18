@@ -14,6 +14,15 @@ import type { PluginInfo } from './PluginTypes';
 
 const MAX_ZIP_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
 
+/** 設定画面の「保存データ」用。IndexedDB に保存されているプラグインを、一番上のフォルダ単位でまとめたもの。 */
+export interface PluginPackageSummary {
+  folder: string; // 保存先の一番上のフォルダ名 (取り込んだ lua / zip の名前)
+  titles: string[]; // このフォルダにある lua プラグインの名前
+  luaCount: number;
+  assetCount: number; // lua 以外 (画像など) のファイル数
+  bytes: number;
+}
+
 export class PluginItem {
   readonly id: string; // "builtin/<fileName>" or "user/<relPath>"
   readonly fileName: string;
@@ -547,6 +556,51 @@ export class PluginStore {
       this.storedFiles.delete(p);
     }
     await PluginStorage.deletePaths([...toDelete]);
+    this.notify();
+  }
+
+  /** 保存済みのファイルを、一番上のフォルダごとにまとめて返す (設定画面の一覧用)。 */
+  getPackageSummaries(): PluginPackageSummary[] {
+    const map = new Map<string, PluginPackageSummary>();
+    for (const [p, f] of this.storedFiles.entries()) {
+      const folder = p.split('/')[0];
+      let entry = map.get(folder);
+      if (!entry) {
+        entry = { folder, titles: [], luaCount: 0, assetCount: 0, bytes: 0 };
+        map.set(folder, entry);
+      }
+      if (p.toLowerCase().endsWith('.lua')) entry.luaCount += 1;
+      else entry.assetCount += 1;
+      entry.bytes += f.data.byteLength;
+    }
+    for (const it of this.items) {
+      if (it.isBuiltin) continue;
+      const entry = map.get(it.relPath.split('/')[0]);
+      if (entry) entry.titles.push(it.title);
+    }
+    return [...map.values()].sort((a, b) =>
+      a.folder.localeCompare(b.folder, undefined, { sensitivity: 'base' })
+    );
+  }
+
+  /** 一番上のフォルダごと、プラグイン本体と画像などを全部消す (設定画面の「削除」)。 */
+  async removePackage(folder: string): Promise<void> {
+    if (!folder) return;
+    await this.initPromise;
+
+    this.items = this.items.filter(
+      (x) => x.isBuiltin || !(x.relPath === folder || x.relPath.startsWith(`${folder}/`))
+    );
+
+    const toDelete: string[] = [];
+    for (const p of this.storedFiles.keys()) {
+      if (p === folder || p.startsWith(`${folder}/`)) toDelete.push(p);
+    }
+    for (const p of toDelete) {
+      this.revokeIconUrl(p);
+      this.storedFiles.delete(p);
+    }
+    await PluginStorage.deletePaths(toDelete);
     this.notify();
   }
 

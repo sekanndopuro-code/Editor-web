@@ -269,10 +269,10 @@ function drawSprites(ctx: CanvasRenderingContext2D, g: LaneGeo, state: EditorSta
     if (sp.endBeat !== null && sp.endBeat !== undefined) {
       const y1 = g.py(sp.beat);
       const y2 = g.py(sp.endBeat);
+      const top = Math.min(y1, y2);
       const h = Math.max(1, Math.abs(y2 - y1));
-      const cy = (y1 + y2) / 2.0;
-      if (cy < -h || cy > g.H + h) continue;
-      ctx.drawImage(img, cx - w / 2.0, cy - h / 2.0, w, h);
+      if (top + h < 0 || top > g.H) continue;
+      ctx.drawImage(img, cx - w / 2.0, top, w, h);
     } else {
       const aspect = img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 1.0;
       const h = w * aspect;

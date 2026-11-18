@@ -21,7 +21,7 @@ export interface PluginSprite {
   image: string;
   folder: string;
   beat: number;
-  endBeat: number | null;
+  endBeat?: number | null;
   x: number;
   width: number;
   visible: boolean;

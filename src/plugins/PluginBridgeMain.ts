@@ -718,8 +718,8 @@ export class PluginBridgeMain {
         const prop = this.text(a, 1);
         const value = a[2];
         const sp = this.state.pluginSprites[idx];
-        switch (prop) {
-          case 'Beat':
+        switch (prop.toLowerCase()) {
+          case 'beat':
             if (Array.isArray(value) && value.length >= 3) {
               const m = typeof value[0] === 'number' ? value[0] : 0;
               const n = typeof value[1] === 'number' ? value[1] : 0;
@@ -729,7 +729,7 @@ export class PluginBridgeMain {
               sp.beat = value;
             }
             break;
-          case 'EndBeat':
+          case 'endbeat':
             if (Array.isArray(value) && value.length >= 3) {
               const m = typeof value[0] === 'number' ? value[0] : 0;
               const n = typeof value[1] === 'number' ? value[1] : 0;
@@ -741,13 +741,13 @@ export class PluginBridgeMain {
               sp.endBeat = null;
             }
             break;
-          case 'X':
+          case 'x':
             if (typeof value === 'number' && Number.isFinite(value)) sp.x = value;
             break;
-          case 'Width':
+          case 'width':
             if (typeof value === 'number' && Number.isFinite(value)) sp.width = value;
             break;
-          case 'Visible':
+          case 'visible':
             if (typeof value === 'boolean') sp.visible = value;
             else if (typeof value === 'number') sp.visible = value !== 0;
             break;

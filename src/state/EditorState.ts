@@ -299,7 +299,7 @@ export class EditorState {
   private _touchEffect = false; // EditorState.swift :: EditorState.touchEffect
   private _smallTextScale = 1.5; // EditorState.swift :: EditorState.smallTextScale
   private _menuScale = 1.0; // EditorState.swift :: EditorState.menuScale
-  private _renderDprCap = 2.0; // Web版: 描画解像度(devicePixelRatio)の上限。高解像度のスマホで重くなるのを防ぐ
+  private _renderDprCap = 1.0; // Web版: 描画解像度(devicePixelRatio)の上限。高解像度のスマホで重くなるのを防ぐ
   private _stripWidth: number = UIAdjustConstants.stripWidthDefault; // EditorState.swift :: EditorState.stripWidth
   private _rightPanelWidth: number = UIAdjustConstants.panelWidthDefault; // EditorState.swift :: EditorState.rightPanelWidth
   private _clipNotesToTrack = false; // EditorState.swift :: EditorState.clipNotesToTrack

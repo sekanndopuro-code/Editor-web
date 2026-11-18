@@ -54,11 +54,14 @@ const FrameCanvas: React.FC<{
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawRef = useRef(draw);
   drawRef.current = draw;
+  const dprCap = state.renderDprCap;
 
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || width <= 0 || height <= 0) return;
-    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    // 描画解像度の上限 (SETTING「描画の細かさ」)。端末の倍率がそれ以下ならそのまま。
+    const deviceDpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const dpr = Math.min(deviceDpr, dprCap);
     const backingScale = dpr * Math.max(1, designScale);
     const pw = Math.max(1, Math.round(width * backingScale));
     const ph = Math.max(1, Math.round(height * backingScale));
@@ -71,7 +74,7 @@ const FrameCanvas: React.FC<{
     ctx.setTransform(backingScale, 0, 0, backingScale, 0, 0);
     ctx.clearRect(0, 0, width, height);
     drawRef.current(ctx, { width, height });
-  }, [width, height, designScale]);
+  }, [width, height, designScale, dprCap]);
 
   useEffect(() => {
     paint();

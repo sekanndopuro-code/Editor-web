@@ -222,7 +222,8 @@ export class EditorState {
   static readonly divideMax = 1024; // EditorState.swift :: EditorState.divideRange.upperBound
   static readonly zoomCount = 17; // EditorState.swift :: EditorState.zoomCount
   static readonly playLead = 0.05; // EditorState.swift :: EditorState.playLead
-  static readonly keyLookahead = 0.25; // EditorState.swift :: EditorState.keyLookahead
+  // Web版: 描画が一瞬詰まってもノーツSEの予約が間に合うよう、先読みを 0.25 → 0.5 秒に延長 (停止時は cancelScheduled で破棄される)
+  static readonly keyLookahead = 0.5; // EditorState.swift :: EditorState.keyLookahead (0.25)
 
   chart: ChartData;
   timeMap: TimeMap;
@@ -298,6 +299,7 @@ export class EditorState {
   private _touchEffect = false; // EditorState.swift :: EditorState.touchEffect
   private _smallTextScale = 1.5; // EditorState.swift :: EditorState.smallTextScale
   private _menuScale = 1.0; // EditorState.swift :: EditorState.menuScale
+  private _renderDprCap = 2.0; // Web版: 描画解像度(devicePixelRatio)の上限。高解像度のスマホで重くなるのを防ぐ
   private _stripWidth: number = UIAdjustConstants.stripWidthDefault; // EditorState.swift :: EditorState.stripWidth
   private _rightPanelWidth: number = UIAdjustConstants.panelWidthDefault; // EditorState.swift :: EditorState.rightPanelWidth
   private _clipNotesToTrack = false; // EditorState.swift :: EditorState.clipNotesToTrack
@@ -486,6 +488,9 @@ export class EditorState {
     const menu = EditorState.readStoredNumber('editor.menuScale');
     if (menu !== null) this._menuScale = Math.min(Math.max(menu, 1.0), 2.0);
 
+    const dprCap = EditorState.readStoredNumber('editor.renderDprCap');
+    if (dprCap !== null) this._renderDprCap = Math.min(Math.max(dprCap, 1.0), 3.0);
+
     const strip = EditorState.readStoredNumber('editor.stripWidth');
     if (strip !== null) {
       this._stripWidth = Math.min(Math.max(strip, UIAdjustConstants.stripWidthDefault), UIAdjustConstants.stripWidthMax);
@@ -589,6 +594,13 @@ export class EditorState {
   set menuScale(v: number) {
     this._menuScale = Math.min(Math.max(v, 1.0), 2.0);
     EditorState.writeStoredSetting('editor.menuScale', this._menuScale);
+    this.emitUI();
+  }
+
+  get renderDprCap(): number { return this._renderDprCap; }
+  set renderDprCap(v: number) {
+    this._renderDprCap = Math.min(Math.max(v, 1.0), 3.0);
+    EditorState.writeStoredSetting('editor.renderDprCap', this._renderDprCap);
     this.emitUI();
   }
 

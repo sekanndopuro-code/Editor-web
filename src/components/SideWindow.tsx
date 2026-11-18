@@ -1518,6 +1518,24 @@ const SettingWindowContent: React.FC<{
 
           <SideDivider />
 
+          {/* 描画の細かさ (Web版: スマホで重いときに下げる) */}
+          {sliderRow(
+            '描画の細かさ',
+            `${state.renderDprCap.toFixed(2)}倍`,
+            state.renderDprCap,
+            1.0,
+            3.0,
+            0.25,
+            (v) => {
+              state.renderDprCap = v;
+            }
+          )}
+          {noteText(
+            'レーンや帯を描く細かさの上限です (初期値 2.00倍)。数字を下げると、少し粗くなる代わりに描画がかなり軽くなります。ノーツが多い所でフリーズする・反応が遅いときは 1.00〜1.50倍 にしてください。端末が持っている倍率より大きくはなりません。'
+          )}
+
+          <SideDivider />
+
           {/* ノーツの縦幅 (見た目と当たり判定) */}
           {sliderRow(
             'ノーツの縦幅',

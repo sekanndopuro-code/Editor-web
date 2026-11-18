@@ -1,6 +1,6 @@
 // SideWindow.swift :: SidePanelLayer / SideWindowShape / SideWindow / BPMWindowContent / EffectWindowContent
 import React, { useEffect, useRef, useState } from 'react';
-import { KeySound } from '../audio/KeySound';
+import { KeySound, NOTE_SOUND_OPTIONS } from '../audio/KeySound';
 import { Beat, normalizeNumberInput } from '../core/Beat';
 import { EffectKind, formatEffectValue } from '../core/ChartModel';
 import { BACKGROUND_MAX_LONG_SIDE, prepareBackgroundImage } from '../core/ImageNormalize';
@@ -1198,6 +1198,56 @@ const SettingWindowContent: React.FC<{
     </div>
   );
 
+  const choiceRow = <T extends string>(
+    title: string,
+    options: readonly { id: T; label: string }[],
+    selected: T,
+    onSelect: (id: T) => void
+  ) => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+      <span
+        style={{
+          font: panelLabelFontCss(21, fontBoost), // sliderRow のタイトルと同じ
+          color: '#ffffff',
+          textAlign: 'left',
+          lineHeight: 1.2,
+        }}
+      >
+        {title}
+      </span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+        {options.map((o) => {
+          const isOn = o.id === selected;
+          return (
+            <button
+              key={o.id}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(o.id);
+              }}
+              style={{
+                flex: '1 1 calc(50% - 4px)',
+                minWidth: 0,
+                minHeight: 40,
+                background: 'transparent',
+                border: `2px solid ${isOn ? SwiftColors.panelBlue : '#ffffff'}`, // checkRow と同じ配色
+                boxSizing: 'border-box',
+                padding: '0 8px',
+                cursor: 'pointer',
+                font: panelLabelFontCss(18, fontBoost),
+                color: isOn ? SwiftColors.panelBlue : '#ffffff',
+                lineHeight: 1.2,
+              }}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   const checkRow = (title: string, description: string, isOn: boolean, onToggle: () => void) => (
     // SideWindow.swift :: SettingWindowContent.checkRow
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
@@ -1310,7 +1360,17 @@ const SettingWindowContent: React.FC<{
             },
             () => {
               // 指を離した時に1回鳴らして、音量を確かめられるようにする (SideWindow.swift :: volumeRows)
-              KeySound.shared.playNow();
+              void KeySound.shared.preview();
+            }
+          )}
+
+          {choiceRow(
+            'ノーツサウンドの種類',
+            NOTE_SOUND_OPTIONS,
+            state.noteSound,
+            (id) => {
+              state.noteSound = id;
+              void KeySound.shared.preview(); // 選んだ音を1回鳴らして確かめられるようにする
             }
           )}
 

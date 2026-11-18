@@ -22,7 +22,7 @@ import { createDemoChartJSON } from '../core/DemoChart';
 import { detectImageMime, replaceExtWithJpg } from '../core/ImageNormalize';
 import { exportMCZBlob } from '../core/MCZArchive';
 import { GameAudio, SongPCM, getSharedAudioContext, unlockAudioContext } from '../audio/AudioEngine';
-import { KeySound } from '../audio/KeySound';
+import { DEFAULT_NOTE_SOUND, KeySound, isNoteSoundId, type NoteSoundId } from '../audio/KeySound';
 import { LuaEngine, type RunningPluginHandle } from '../plugins/LuaEngine';
 import { base64ToBytes } from '../plugins/PluginImageTools';
 import { PluginSession } from '../plugins/PluginSession';
@@ -239,6 +239,7 @@ export class EditorState {
   private _bgDim = 0.7; // EditorState.swift :: EditorState.bgDim
   private _musicVolume = 1.0; // EditorState.swift :: EditorState.musicVolume
   private _noteVolume = 0.8; // EditorState.swift :: EditorState.noteVolume
+  private _noteSound: NoteSoundId = DEFAULT_NOTE_SOUND; // ノーツサウンドの種類 (hitsound の4種類から選択)
   private _noteHeightScale: number = NoteHeightConstants.min; // ノーツの縦幅 (100% 〜 240%)
 
   // View & Control State
@@ -391,6 +392,7 @@ export class EditorState {
     this.loadPersistedSettings();
     this.prepareEngineAudio();
     this.applyVolumes();
+    KeySound.shared.soundId = this._noteSound;
     KeySound.shared.prepare();
   }
 
@@ -400,6 +402,14 @@ export class EditorState {
       if (raw === null) return null;
       const v = Number(raw);
       return Number.isFinite(v) ? v : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private static readStoredString(key: string): string | null {
+    try {
+      return window.localStorage.getItem(key);
     } catch {
       return null;
     }
@@ -416,7 +426,7 @@ export class EditorState {
     }
   }
 
-  private static writeStoredSetting(key: string, value: number | boolean): void {
+  private static writeStoredSetting(key: string, value: number | boolean | string): void {
     try {
       window.localStorage.setItem(key, String(value));
     } catch {
@@ -431,6 +441,9 @@ export class EditorState {
 
     const noteVol = EditorState.readStoredNumber('editor.noteVolume');
     if (noteVol !== null) this._noteVolume = Math.min(Math.max(noteVol, 0), 1);
+
+    const noteSound = EditorState.readStoredString('editor.noteSound');
+    if (isNoteSoundId(noteSound)) this._noteSound = noteSound;
 
     const noteH = EditorState.readStoredNumber('editor.noteHeightScale');
     if (noteH !== null) this._noteHeightScale = NoteHeightConstants.clamp(noteH);
@@ -511,6 +524,15 @@ export class EditorState {
     this._noteVolume = Math.min(Math.max(v, 0), 1);
     EditorState.writeStoredSetting('editor.noteVolume', this._noteVolume);
     this.applyVolumes();
+    this.emitUI();
+  }
+
+  get noteSound(): NoteSoundId { return this._noteSound; }
+  set noteSound(id: NoteSoundId) {
+    if (!isNoteSoundId(id)) return;
+    this._noteSound = id;
+    EditorState.writeStoredSetting('editor.noteSound', id);
+    KeySound.shared.soundId = id;
     this.emitUI();
   }
 

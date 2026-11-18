@@ -1,7 +1,7 @@
 // 設定画面の「保存データ」欄。このエディタがブラウザの中に何を保存しているかを一覧にして、
 // 消える条件を説明し、1つずつ削除できるようにする (全部まとめて消すボタンは置かない)。
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { PluginStore, type PluginPackageSummary } from '../plugins/PluginStore';
+import { PluginStore, type PluginFileSummary, type PluginPackageSummary } from '../plugins/PluginStore';
 import { EditorSessionStorage, type SessionStorageSummary } from '../state/EditorSessionStorage';
 import { SwiftColors, panelLabelFontCss } from '../state/EditorConstants';
 import type { EditorState } from '../state/EditorState';
@@ -44,6 +44,14 @@ function countSettingKeys(): number {
   }
 }
 
+type RowAction = {
+  id: string;
+  label: string;
+  confirm: boolean; // true: 1回目で「もう一度」に変わり、2回目で実行 (消す操作)
+  reload?: boolean; // true: 実行後に曲などの保存状況も読み直す
+  run: () => Promise<void> | void;
+};
+
 export const StorageManager: React.FC<{
   state: EditorState;
   fontBoost: number;
@@ -55,6 +63,7 @@ export const StorageManager: React.FC<{
   const [lastChartBytes, setLastChartBytes] = useState<number | null>(null);
   const [settingKeys, setSettingKeys] = useState(0);
   const [armed, setArmed] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const armTimerRef = useRef<number | null>(null);
   const aliveRef = useRef(true);
 
@@ -101,10 +110,14 @@ export const StorageManager: React.FC<{
     };
   }, [refreshAll, refreshPlugins]);
 
-  // 1回目のタップで「もう一度押すと削除」に変わり、4秒たつと元に戻る (押し間違い防止)
-  const confirmThen = (key: string, action: () => Promise<void> | void) => {
-    if (armed !== key) {
-      setArmed(key);
+  // 消す操作は、1回目のタップで「もう一度」に変わり、4秒たつと元に戻る (押し間違い防止)
+  const runAction = (a: RowAction) => {
+    if (!a.confirm) {
+      void a.run();
+      return;
+    }
+    if (armed !== a.id) {
+      setArmed(a.id);
       if (armTimerRef.current !== null) window.clearTimeout(armTimerRef.current);
       armTimerRef.current = window.setTimeout(() => {
         armTimerRef.current = null;
@@ -117,8 +130,18 @@ export const StorageManager: React.FC<{
       armTimerRef.current = null;
     }
     setArmed(null);
-    void Promise.resolve(action()).then(() => {
-      void refreshAll();
+    void Promise.resolve(a.run()).then(() => {
+      if (a.reload) void refreshAll();
+      else refreshPlugins();
+    });
+  };
+
+  const toggleExpanded = (folder: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(folder)) next.delete(folder);
+      else next.add(folder);
+      return next;
     });
   };
 
@@ -157,75 +180,82 @@ export const StorageManager: React.FC<{
     key: string,
     title: string,
     detail: string,
-    onDelete: (() => Promise<void> | void) | null
-  ) => {
-    const isArmed = armed === key;
-    return (
-      <div
-        key={key}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          width: '100%',
-          padding: '8px 10px',
-          boxSizing: 'border-box',
-          border: '1px solid rgba(255, 255, 255, 0.25)',
-        }}
-      >
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <span
-            style={{
-              font: panelLabelFontCss(18, fontBoost),
-              color: '#ffffff',
-              lineHeight: 1.25,
-              textAlign: 'left',
-              wordBreak: 'break-word',
-            }}
-          >
-            {title}
-          </span>
-          <span
-            style={{
-              fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
-              fontSize: smallSize,
-              color: 'rgba(255, 255, 255, 0.55)',
-              lineHeight: 1.35,
-              textAlign: 'left',
-              wordBreak: 'break-word',
-              whiteSpace: 'pre-line',
-            }}
-          >
-            {detail}
-          </span>
-        </div>
-        {onDelete && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              confirmThen(key, onDelete);
-            }}
-            style={{
-              flexShrink: 0,
-              minWidth: 64,
-              minHeight: 36,
-              padding: '4px 10px',
-              border: `2px solid ${isArmed ? 'rgba(255, 59, 48, 0.95)' : '#ffffff'}`,
-              background: isArmed ? 'rgba(255, 59, 48, 0.85)' : 'transparent',
-              color: '#ffffff',
-              font: panelLabelFontCss(16, fontBoost),
-              lineHeight: 1.1,
-              cursor: 'pointer',
-              boxSizing: 'border-box',
-            }}
-          >
-            {isArmed ? 'もう一度' : '削除'}
-          </button>
-        )}
+    actions: RowAction[],
+    indent = false
+  ) => (
+    <div
+      key={key}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        width: indent ? 'calc(100% - 16px)' : '100%',
+        marginLeft: indent ? 16 : 0,
+        padding: indent ? '5px 8px' : '8px 10px',
+        boxSizing: 'border-box',
+        border: '1px solid rgba(255, 255, 255, 0.25)',
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <span
+          style={{
+            font: panelLabelFontCss(indent ? 16 : 18, fontBoost),
+            color: '#ffffff',
+            lineHeight: 1.25,
+            textAlign: 'left',
+            wordBreak: 'break-word',
+          }}
+        >
+          {title}
+        </span>
+        <span
+          style={{
+            fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+            fontSize: smallSize,
+            color: 'rgba(255, 255, 255, 0.55)',
+            lineHeight: 1.35,
+            textAlign: 'left',
+            wordBreak: 'break-word',
+            whiteSpace: 'pre-line',
+          }}
+        >
+          {detail}
+        </span>
       </div>
-    );
-  };
+      {actions.length > 0 && (
+        <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {actions.map((a) => {
+            const isArmed = a.confirm && armed === a.id;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  runAction(a);
+                }}
+                style={{
+                  minWidth: 64,
+                  minHeight: 36,
+                  padding: '4px 10px',
+                  border: `2px solid ${isArmed ? 'rgba(255, 59, 48, 0.95)' : '#ffffff'}`,
+                  background: isArmed ? 'rgba(255, 59, 48, 0.85)' : 'transparent',
+                  color: '#ffffff',
+                  font: panelLabelFontCss(16, fontBoost),
+                  lineHeight: 1.1,
+                  cursor: 'pointer',
+                  boxSizing: 'border-box',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {isArmed ? 'もう一度' : a.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 
   const removePluginPackage = async (pkg: PluginPackageSummary) => {
     const activeId = state.activePluginID;
@@ -234,6 +264,22 @@ export const StorageManager: React.FC<{
       if (state.tool === 'plugin') state.tool = 'unselected';
     }
     await PluginStore.shared.removePackage(pkg.folder);
+  };
+
+  const removePluginFile = async (f: PluginFileSummary) => {
+    if (state.activePluginID === `user/${f.path}`) {
+      state.stopInteractivePlugin();
+      if (state.tool === 'plugin') state.tool = 'unselected';
+    }
+    await PluginStore.shared.removeFile(f.path);
+  };
+
+  const fileDetail = (f: PluginFileSummary) => {
+    const stem = f.name.replace(/\.lua$/i, '');
+    const parts: string[] = [];
+    if (f.isLua && f.title && f.title !== stem) parts.push(`プラグイン名: ${f.title}`);
+    parts.push(formatBytes(f.bytes));
+    return parts.join(' · ');
   };
 
   const pluginDetail = (pkg: PluginPackageSummary) => {
@@ -245,8 +291,7 @@ export const StorageManager: React.FC<{
     }
     if (pkg.assetCount > 0) parts.push(`画像など ${pkg.assetCount}個`);
     parts.push(formatBytes(pkg.bytes));
-    const names = pkg.titles.length > 0 ? `\n${pkg.titles.join('、')}` : '';
-    return `${parts.join(' · ')}${names}`;
+    return parts.join(' · ');
   };
 
   return (
@@ -261,11 +306,46 @@ export const StorageManager: React.FC<{
         プラグイン
       </div>
       {packages.length === 0 && note('保存されているプラグインはありません。')}
-      {packages.map((pkg) =>
-        row(`plugin:${pkg.folder}`, pkg.folder, pluginDetail(pkg), () => removePluginPackage(pkg))
-      )}
+      {packages.map((pkg) => {
+        const open = expanded.has(pkg.folder);
+        return (
+          <React.Fragment key={`pkg:${pkg.folder}`}>
+            {row(`plugin:${pkg.folder}`, pkg.folder, pluginDetail(pkg), [
+              {
+                id: `toggle:${pkg.folder}`,
+                label: open ? '閉じる' : '中身',
+                confirm: false,
+                run: () => toggleExpanded(pkg.folder),
+              },
+              {
+                id: `plugin:${pkg.folder}`,
+                label: 'まとめて削除',
+                confirm: true,
+                run: () => removePluginPackage(pkg),
+              },
+            ])}
+            {open &&
+              PluginStore.shared.getPackageFiles(pkg.folder).map((f) =>
+                row(
+                  `file:${f.path}`,
+                  f.name,
+                  fileDetail(f),
+                  [
+                    {
+                      id: `file:${f.path}`,
+                      label: '削除',
+                      confirm: true,
+                      run: () => removePluginFile(f),
+                    },
+                  ],
+                  true
+                )
+              )}
+          </React.Fragment>
+        );
+      })}
       {note(
-        '「削除」は、そのフォルダの lua と画像などをまとめて消します。Adv. の一覧からプラグインを1つ消したときも、同じフォルダにほかの lua が残っていなければ画像ごと消えます (残っていれば画像はそのままです)。'
+        '「中身」を押すと、フォルダの中の lua と画像などが1つずつ出て、それぞれ「削除」できます。1つ消しても、ほかのファイルには触りません (画像は、ほかの lua が使っていることがあるので、lua を消しても自動では消えません)。「まとめて削除」は、フォルダの中身を全部消します。Adv. の一覧から消したときは、同じフォルダにほかの lua が残っていなければ画像ごと消えます。'
       )}
 
       <div style={{ font: panelLabelFontCss(18, fontBoost), color: SwiftColors.panelBlue, width: '100%', textAlign: 'left' }}>
@@ -281,19 +361,39 @@ export const StorageManager: React.FC<{
             session.chart
               ? `${formatBytes(session.chart.bytes)} · 最終保存 ${formatTime(session.chart.updatedAt)}`
               : '保存されていません',
-            null
+            []
           )}
           {row(
             'session:audio',
             session.audio ? `曲 (${session.audio.fileName || '無題'})` : '曲',
             session.audio ? formatBytes(session.audio.bytes) : '保存されていません',
-            session.audio ? () => EditorSessionStorage.saveAudio(null, '').then(() => undefined) : null
+            session.audio
+              ? [
+                  {
+                    id: 'session:audio',
+                    label: '削除',
+                    confirm: true,
+                    reload: true,
+                    run: () => EditorSessionStorage.saveAudio(null, '').then(() => undefined),
+                  },
+                ]
+              : []
           )}
           {row(
             'session:bg',
             session.bg ? `背景画像 (${session.bg.fileName || '無題'})` : '背景画像',
             session.bg ? formatBytes(session.bg.bytes) : '保存されていません',
-            session.bg ? () => EditorSessionStorage.saveBackground(null, '').then(() => undefined) : null
+            session.bg
+              ? [
+                  {
+                    id: 'session:bg',
+                    label: '削除',
+                    confirm: true,
+                    reload: true,
+                    run: () => EditorSessionStorage.saveBackground(null, '').then(() => undefined),
+                  },
+                ]
+              : []
           )}
         </>
       )}
@@ -302,7 +402,7 @@ export const StorageManager: React.FC<{
           'local:lastChart',
           '譜面のバックアップ (localStorage)',
           `${formatBytes(lastChartBytes)} · 今のところ復元には使われていません`,
-          null
+          []
         )}
       {note(
         '譜面は、編集するたびに自動で上書き保存されるので、ここからは消せません (消してもすぐ書き直されます)。曲と背景は、消しても今の編集には影響しませんが、ページを開き直したときに復元されなくなります。'
@@ -311,7 +411,7 @@ export const StorageManager: React.FC<{
       <div style={{ font: panelLabelFontCss(18, fontBoost), color: SwiftColors.panelBlue, width: '100%', textAlign: 'left' }}>
         設定
       </div>
-      {row('local:settings', 'この SETTING の項目', `${settingKeys}個 · ごく小さい値だけです`, null)}
+      {row('local:settings', 'この SETTING の項目', `${settingKeys}個 · ごく小さい値だけです`, [])}
 
       <div style={{ font: panelLabelFontCss(18, fontBoost), color: SwiftColors.panelBlue, width: '100%', textAlign: 'left' }}>
         いつ消えるか

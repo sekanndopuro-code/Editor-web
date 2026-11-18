@@ -15,6 +15,14 @@ import type { PluginInfo } from './PluginTypes';
 const MAX_ZIP_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
 
 /** 設定画面の「保存データ」用。IndexedDB に保存されているプラグインを、一番上のフォルダ単位でまとめたもの。 */
+export interface PluginFileSummary {
+  path: string; // 保存パス (一番上のフォルダ名から)
+  name: string; // フォルダ内での名前 (サブフォルダがあれば含む)
+  bytes: number;
+  isLua: boolean;
+  title: string | null; // lua のとき、プラグイン一覧に出る名前
+}
+
 export interface PluginPackageSummary {
   folder: string; // 保存先の一番上のフォルダ名 (取り込んだ lua / zip の名前)
   titles: string[]; // このフォルダにある lua プラグインの名前
@@ -581,6 +589,45 @@ export class PluginStore {
     return [...map.values()].sort((a, b) =>
       a.folder.localeCompare(b.folder, undefined, { sensitivity: 'base' })
     );
+  }
+
+  /** フォルダの中のファイル (lua・画像など) を1つずつ返す。 */
+  getPackageFiles(folder: string): PluginFileSummary[] {
+    const titleByPath = new Map<string, string>();
+    for (const it of this.items) {
+      if (!it.isBuiltin) titleByPath.set(it.relPath, it.title);
+    }
+    const out: PluginFileSummary[] = [];
+    for (const [p, f] of this.storedFiles.entries()) {
+      if (!p.startsWith(`${folder}/`)) continue;
+      const isLua = p.toLowerCase().endsWith('.lua');
+      out.push({
+        path: p,
+        name: p.slice(folder.length + 1),
+        bytes: f.data.byteLength,
+        isLua,
+        title: isLua ? (titleByPath.get(p) ?? null) : null,
+      });
+    }
+    out.sort((a, b) =>
+      a.isLua === b.isLua
+        ? a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+        : a.isLua
+          ? -1
+          : 1
+    );
+    return out;
+  }
+
+  /** ファイルを1つだけ消す (lua なら一覧からも外れる)。ほかのファイルには触らない。 */
+  async removeFile(path: string): Promise<void> {
+    if (!path) return;
+    await this.initPromise;
+    this.items = this.items.filter((x) => x.isBuiltin || x.relPath !== path);
+    this.revokeIconUrl(path);
+    this.storedFiles.delete(path);
+    await PluginStorage.deletePaths([path]);
+    this.notify();
   }
 
   /** 一番上のフォルダごと、プラグイン本体と画像などを全部消す (設定画面の「削除」)。 */

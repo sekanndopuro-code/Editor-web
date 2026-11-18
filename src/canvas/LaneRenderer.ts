@@ -16,6 +16,7 @@ import {
   drawWipe,
   roundedRectPath,
 } from './LanePrimitives';
+import { drawAudioVisuals } from './LaneAudioVisuals';
 import { drawFX } from './RenderersFX';
 
 const DOT_RADIUS = 11.4; // Renderers.swift :: LaneRenderer.dotRadius
@@ -399,6 +400,7 @@ export const LaneRenderer = {
 
     ctx.fillStyle = SwiftColors.timePanel;
     ctx.fillRect(0, 0, g.trackL, g.H); // Renderers.swift :: LaneRenderer.draw (left beat label panel)
+    drawAudioVisuals(ctx, g, state);
     drawVLines(ctx, g, state.gridLines);
     drawHLines(ctx, g, state.snapDen);
     drawBPM(ctx, g, state);

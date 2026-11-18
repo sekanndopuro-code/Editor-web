@@ -13,6 +13,7 @@ import {
   drawWipe,
   roundedRectPath,
 } from './LanePrimitives';
+import { drawAudioVisuals } from './LaneAudioVisuals';
 
 export interface FXRange {
   lo: number;
@@ -219,6 +220,7 @@ export function drawFX(ctx: CanvasRenderingContext2D, g: LaneGeo, state: EditorS
 
   ctx.fillStyle = SwiftColors.timePanel;
   ctx.fillRect(0, 0, g.trackL, g.H); // RenderersFX.swift :: LaneRenderer.drawFX
+  drawAudioVisuals(ctx, g, state);
   drawVLines(ctx, g, state.gridLines);
 
   const ranges = fxRanges(g, f, state.totalSec);

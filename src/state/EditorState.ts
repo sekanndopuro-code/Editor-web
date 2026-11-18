@@ -22,6 +22,7 @@ import { createDemoChartJSON } from '../core/DemoChart';
 import { detectImageMime, replaceExtWithJpg } from '../core/ImageNormalize';
 import { exportMCZBlob } from '../core/MCZArchive';
 import { GameAudio, SongPCM, getSharedAudioContext, unlockAudioContext } from '../audio/AudioEngine';
+import { AudioVisualCache } from '../audio/AudioVisualCache';
 import { DEFAULT_NOTE_SOUND, KeySound, isNoteSoundId, type NoteSoundId } from '../audio/KeySound';
 import { LuaEngine, type RunningPluginHandle } from '../plugins/LuaEngine';
 import { base64ToBytes } from '../plugins/PluginImageTools';
@@ -311,6 +312,9 @@ export class EditorState {
   private _snapViewToLFB = true; // EditorState.swift :: EditorState.snapViewToLFB
   private _resnapExistingNotes = false; // EditorState.swift :: EditorState.resnapExistingNotes
   private _copyKeepsRangeOffset = false; // EditorState.swift :: EditorState.copyKeepsRangeOffset
+  private _showWaveform = false;
+  private _showSpectrogram = false;
+  readonly audioVisuals: AudioVisualCache;
 
   // Cached FX map
   private fxCache: EffectMap = EffectMap.none;
@@ -392,6 +396,13 @@ export class EditorState {
     }
     this.recomputeTotal();
     this.loadPersistedSettings();
+    this.audioVisuals = new AudioVisualCache(
+      () => this.emitFrame(),
+      (msg) => this.showToast(msg)
+    );
+    this.audioVisuals.setSong(song);
+    this.audioVisuals.ensureWaveform(this._showWaveform);
+    this.audioVisuals.ensureSpectrogram(this._showSpectrogram);
     this.prepareEngineAudio();
     this.applyVolumes();
     KeySound.shared.soundId = this._noteSound;
@@ -514,6 +525,12 @@ export class EditorState {
 
     const sharp = EditorState.readStoredBool('editor.sharpStretch');
     if (sharp !== null) this._sharpStretch = sharp;
+
+    const showWf = EditorState.readStoredBool('editor.showWaveform');
+    if (showWf !== null) this._showWaveform = showWf;
+
+    const showSpec = EditorState.readStoredBool('editor.showSpectrogram');
+    if (showSpec !== null) this._showSpectrogram = showSpec;
   }
 
   get musicVolume(): number { return this._musicVolume; }
@@ -693,6 +710,22 @@ export class EditorState {
   set copyKeepsRangeOffset(v: boolean) {
     this._copyKeepsRangeOffset = v;
     EditorState.writeStoredSetting('editor.copyKeepsRangeOffset', v);
+    this.emitUI();
+  }
+
+  get showWaveform(): boolean { return this._showWaveform; }
+  set showWaveform(v: boolean) {
+    this._showWaveform = v;
+    EditorState.writeStoredSetting('editor.showWaveform', v);
+    this.audioVisuals.ensureWaveform(v);
+    this.emitUI();
+  }
+
+  get showSpectrogram(): boolean { return this._showSpectrogram; }
+  set showSpectrogram(v: boolean) {
+    this._showSpectrogram = v;
+    EditorState.writeStoredSetting('editor.showSpectrogram', v);
+    this.audioVisuals.ensureSpectrogram(v);
     this.emitUI();
   }
 
@@ -1462,6 +1495,7 @@ export class EditorState {
     this.stopPlugin();
     if (this.isPlaying) this.pause();
     KeySound.shared.cancelScheduled();
+    this.audioVisuals.dispose();
     this.engineAudio?.shutdown();
     this.engineAudio = null;
     if (this.saveTimer !== null) {
@@ -1639,6 +1673,9 @@ export class EditorState {
       this.engineAudio = null;
     }
     this.song = song;
+    this.audioVisuals.setSong(song);
+    this.audioVisuals.ensureWaveform(this._showWaveform);
+    this.audioVisuals.ensureSpectrogram(this._showSpectrogram);
     if (bytes) {
       const copy = new Uint8Array(bytes.byteLength);
       copy.set(bytes);

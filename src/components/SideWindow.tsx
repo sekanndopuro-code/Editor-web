@@ -1248,7 +1248,7 @@ const SettingWindowContent: React.FC<{
     </div>
   );
 
-  const checkRow = (title: string, description: string, isOn: boolean, onToggle: () => void) => (
+  const checkRow = (title: string, description: string | undefined, isOn: boolean, onToggle: () => void) => (
     // SideWindow.swift :: SettingWindowContent.checkRow
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
       <button
@@ -1307,7 +1307,7 @@ const SettingWindowContent: React.FC<{
           {title}
         </span>
       </button>
-      {noteText(description)}
+      {description ? noteText(description) : null}
     </div>
   );
 
@@ -1513,6 +1513,28 @@ const SettingWindowContent: React.FC<{
             state.touchEffect,
             () => {
               state.touchEffect = !state.touchEffect;
+            }
+          )}
+
+          <SideDivider />
+
+          {checkRow(
+            '波形を表示',
+            undefined,
+            state.showWaveform,
+            () => {
+              state.showWaveform = !state.showWaveform;
+            }
+          )}
+
+          <SideDivider />
+
+          {checkRow(
+            'スペクトログラムを表示',
+            undefined,
+            state.showSpectrogram,
+            () => {
+              state.showSpectrogram = !state.showSpectrogram;
             }
           )}
 

@@ -1,0 +1,58 @@
+name: Apply uploaded zip
+
+# リポジトリの一番上 (README と同じ場所) に .zip をアップロードして main に commit すると、
+# zip の中身を同じパスでリポジトリに上書きし、zip を削除して、デプロイまで自動で行います。
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.zip'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: apply-zip
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Overlay zip contents
+        run: |
+          shopt -s nullglob
+          zips=(./*.zip)
+          if [ ${#zips[@]} -eq 0 ]; then echo "no zip"; exit 0; fi
+          for z in "${zips[@]}"; do
+            echo "== $z"
+            unzip -l "$z"
+            # .github/ は GITHUB_TOKEN では push できないので除外 (別途手で更新してください)
+            unzip -o -q "$z" -x '__MACOSX/*' '.github/*' '*/.DS_Store'
+            git rm -q -f "$z"
+          done
+
+      - name: Commit and push
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "Apply uploaded zip"
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      # GITHUB_TOKEN での push は他のワークフローを起動しないので、デプロイを手動起動する
+      - name: Trigger deploy
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main

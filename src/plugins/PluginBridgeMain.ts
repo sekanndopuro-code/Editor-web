@@ -701,6 +701,7 @@ export class PluginBridgeMain {
             image,
             folder: this.assetFolder,
             beat: 0,
+            endBeat: null,
             x: 50,
             width: 10,
             visible: true,
@@ -726,6 +727,18 @@ export class PluginBridgeMain {
               sp.beat = d > 0 ? m + n / d : m;
             } else if (typeof value === 'number' && Number.isFinite(value)) {
               sp.beat = value;
+            }
+            break;
+          case 'EndBeat':
+            if (Array.isArray(value) && value.length >= 3) {
+              const m = typeof value[0] === 'number' ? value[0] : 0;
+              const n = typeof value[1] === 'number' ? value[1] : 0;
+              const d = typeof value[2] === 'number' ? value[2] : 1;
+              sp.endBeat = d > 0 ? m + n / d : m;
+            } else if (typeof value === 'number' && Number.isFinite(value)) {
+              sp.endBeat = value;
+            } else {
+              sp.endBeat = null;
             }
             break;
           case 'X':

@@ -265,12 +265,21 @@ function drawSprites(ctx: CanvasRenderingContext2D, g: LaneGeo, state: EditorSta
     const img = PluginStore.shared.getSpriteImage(sp.folder, sp.image, () => state.emitFrame());
     if (!img || !img.complete || img.naturalWidth <= 0) continue;
     const w = g.trackW * (sp.width / 100.0);
-    const aspect = img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 1.0;
-    const h = w * aspect;
     const cx = g.trackL + g.trackW * (sp.x / 100.0);
-    const cy = g.py(sp.beat);
-    if (cy < -h || cy > g.H + h) continue;
-    ctx.drawImage(img, cx - w / 2.0, cy - h / 2.0, w, h);
+    if (sp.endBeat !== null && sp.endBeat !== undefined) {
+      const y1 = g.py(sp.beat);
+      const y2 = g.py(sp.endBeat);
+      const h = Math.max(1, Math.abs(y2 - y1));
+      const cy = (y1 + y2) / 2.0;
+      if (cy < -h || cy > g.H + h) continue;
+      ctx.drawImage(img, cx - w / 2.0, cy - h / 2.0, w, h);
+    } else {
+      const aspect = img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 1.0;
+      const h = w * aspect;
+      const cy = g.py(sp.beat);
+      if (cy < -h || cy > g.H + h) continue;
+      ctx.drawImage(img, cx - w / 2.0, cy - h / 2.0, w, h);
+    }
   }
 }
 

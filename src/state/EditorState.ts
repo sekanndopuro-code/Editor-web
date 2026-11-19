@@ -312,6 +312,7 @@ export class EditorState {
   private _snapViewToLFB = true; // EditorState.swift :: EditorState.snapViewToLFB
   private _resnapExistingNotes = false; // EditorState.swift :: EditorState.resnapExistingNotes
   private _copyKeepsRangeOffset = false; // EditorState.swift :: EditorState.copyKeepsRangeOffset
+  private _clampChartRange = true;
   private _showWaveform = false;
   private _showSpectrogram = false;
   readonly audioVisuals: AudioVisualCache;
@@ -320,8 +321,9 @@ export class EditorState {
   private fxCache: EffectMap = EffectMap.none;
   private fxKey = '';
 
-  // Cached totalSec
+  // Cached totalSec / minSec
   private totalCache = 1.0; // EditorState.swift :: EditorState.totalCache
+  private minSecCache = 0.0;
   private ignoredCache = 0;
   private totalDirty = true;
 
@@ -329,6 +331,7 @@ export class EditorState {
   private densityRatios: number[] = [];
   private densityDirty = true;
   private densityTotal = -1.0;
+  private densityMin = 0.0;
 
   // Cached NoteIndex
   private noteIndexCache = new NoteIndex();
@@ -489,6 +492,9 @@ export class EditorState {
 
     const keepRange = EditorState.readStoredBool('editor.copyKeepsRangeOffset');
     if (keepRange !== null) this._copyKeepsRangeOffset = keepRange;
+
+    const clampRange = EditorState.readStoredBool('editor.clampChartRange');
+    if (clampRange !== null) this._clampChartRange = clampRange;
 
     const hold = EditorState.readStoredNumber('editor.holdDeselectSec');
     if (hold !== null) this._holdDeselectSec = Math.min(Math.max(hold, 1.0), 5.0);
@@ -713,6 +719,19 @@ export class EditorState {
     this.emitUI();
   }
 
+  get clampChartRange(): boolean { return this._clampChartRange; }
+  set clampChartRange(v: boolean) {
+    this._clampChartRange = v;
+    EditorState.writeStoredSetting('editor.clampChartRange', v);
+    this.recomputeTotal();
+    if (this._viewBeat < this.minBeat) {
+      this._viewBeat = this.minBeat;
+    } else if (this._viewBeat > this.maxBeat) {
+      this._viewBeat = this.maxBeat;
+    }
+    this.emitUI();
+  }
+
   get showWaveform(): boolean { return this._showWaveform; }
   set showWaveform(v: boolean) {
     this._showWaveform = v;
@@ -810,6 +829,11 @@ export class EditorState {
     return this.totalCache;
   }
 
+  get minSec(): number {
+    if (this.totalDirty) this.computeTotal();
+    return this.minSecCache;
+  }
+
   get ignoredBeatCount(): number {
     if (this.totalDirty) this.computeTotal();
     return this.ignoredCache;
@@ -851,6 +875,11 @@ export class EditorState {
     return this.zoomIndex >= 16 ? '1/32拍' : `${this.zoomIndex + 1}/16`; // EditorState.swift :: EditorState.zoomLabel
   }
 
+  get minBeat(): number {
+    if (this._clampChartRange) return 0;
+    return Math.min(0, this.timeMap.beatAtSec(this.minSec));
+  }
+
   get maxBeat(): number {
     return Math.max(1, this.timeMap.beatAtSec(this.totalSec)); // EditorState.swift :: EditorState.maxBeat
   }
@@ -867,23 +896,43 @@ export class EditorState {
     const limitSec = audioSec > 1 ? audioSec + 60.0 : 3.0 * 3600.0;
     const limitBeat = this.timeMap.beatAtSec(limitSec);
     let last = 0.0;
+    let first = 0.0;
     let ignored = 0;
-    for (const n of this.chart.notes) {
-      const s = n.beat.value;
-      if (Number.isFinite(s) && Math.abs(s) <= limitBeat) {
-        if (s > last) last = s;
-      } else {
-        ignored += 1;
-        continue;
-      }
-      for (const g of n.segs) {
-        const b = s + g.beat.value;
-        if (Number.isFinite(b) && Math.abs(b) <= limitBeat) {
-          if (b > last) last = b;
+    if (this._clampChartRange) {
+      for (const n of this.chart.notes) {
+        const s = n.beat.value;
+        if (Number.isFinite(s) && Math.abs(s) <= limitBeat) {
+          if (s > last) last = s;
         } else {
           ignored += 1;
+          continue;
+        }
+        for (const g of n.segs) {
+          const b = s + g.beat.value;
+          if (Number.isFinite(b) && Math.abs(b) <= limitBeat) {
+            if (b > last) last = b;
+          } else {
+            ignored += 1;
+          }
         }
       }
+      this.minSecCache = 0.0;
+    } else {
+      for (const n of this.chart.notes) {
+        const s = n.beat.value;
+        if (Number.isFinite(s)) {
+          if (s > last) last = s;
+          if (s < first) first = s;
+        }
+        for (const g of n.segs) {
+          const b = s + g.beat.value;
+          if (Number.isFinite(b)) {
+            if (b > last) last = b;
+            if (b < first) first = b;
+          }
+        }
+      }
+      this.minSecCache = first < 0 ? Math.min(0, this.timeMap.secAtBeat(first) - 2.0) : 0.0;
     }
     this.ignoredCache = ignored;
     const noteSec = this.timeMap.secAtBeat(last) + 2.0; // EditorState.swift :: EditorState.computeTotal()
@@ -891,10 +940,16 @@ export class EditorState {
   }
 
   seekDensityRatios(): number[] {
-    if (this.densityDirty || this.densityTotal !== this.totalSec || this.densityRatios.length === 0) {
-      const counts = SeekDensity.counts(this.chart.notes, this.timeMap, this.totalSec);
+    if (
+      this.densityDirty ||
+      this.densityTotal !== this.totalSec ||
+      this.densityMin !== this.minSec ||
+      this.densityRatios.length === 0
+    ) {
+      const counts = SeekDensity.counts(this.chart.notes, this.timeMap, this.totalSec, this.minSec);
       this.densityRatios = SeekDensity.ratios(counts);
       this.densityTotal = this.totalSec;
+      this.densityMin = this.minSec;
       this.densityDirty = false;
     }
     return this.densityRatios;
@@ -947,12 +1002,14 @@ export class EditorState {
 
   timeString(sec: number): string {
     // EditorState.swift :: EditorState.timeString(_:)
-    const s = Math.max(0, sec);
+    const neg = !this._clampChartRange && sec < 0;
+    const s = neg ? -sec : Math.max(0, sec);
     const ms = Math.round(s * 1000);
     const min = Math.floor(ms / 60000);
     const secPart = Math.floor(ms / 1000) % 60;
     const msPart = ms % 1000;
-    return `${String(min).padStart(2, '0')}:${String(secPart).padStart(2, '0')}.${String(msPart).padStart(3, '0')}`;
+    const sign = neg && ms > 0 ? '-' : '';
+    return `${sign}${String(min).padStart(2, '0')}:${String(secPart).padStart(2, '0')}.${String(msPart).padStart(3, '0')}`;
   }
 
   // MARK: Playback (GameAudio sample clock + requestAnimationFrame)
@@ -1011,17 +1068,13 @@ export class EditorState {
     }
     KeySound.shared.cancelScheduled();
     this.isPlaying = false;
-    this._viewBeat = Math.min(Math.max(0, b), this.maxBeat);
+    this._viewBeat = Math.min(Math.max(this.minBeat, b), this.maxBeat);
     this.emitUI();
   }
 
   private rebuildKeyTimes(): void {
     // EditorState.swift :: EditorState.rebuildKeyTimes()
-    const out: number[] = [];
-    for (const n of this.chart.notes) {
-      out.push(this.timeMap.secAtBeat(n.beat.value));
-    }
-    out.sort((a, b) => a - b);
+    const out = this.chart.notes.map((n) => this.timeMap.secAtBeat(n.beat.value)).sort((a, b) => a - b);
     const uniq: number[] = [];
     for (const t of out) {
       if (uniq.length > 0 && t - uniq[uniq.length - 1] < 0.001) continue; // 同時押しは1発にまとめる
@@ -1136,7 +1189,7 @@ export class EditorState {
   }
 
   setViewBeat(b: number): void {
-    this._viewBeat = Math.min(Math.max(0, b), this.maxBeat); // EditorState.swift :: EditorState.setViewBeat(_:)
+    this._viewBeat = Math.min(Math.max(this.minBeat, b), this.maxBeat); // EditorState.swift :: EditorState.setViewBeat(_:)
     this.emitUI();
   }
 
@@ -1147,8 +1200,10 @@ export class EditorState {
       return;
     }
     const den = Math.max(1, this.snapDen);
-    let s = Math.round(Math.max(0, b) * den) / den;
+    const lo = this.minBeat;
     const hi = this.maxBeat;
+    let s = Math.round(Math.max(lo, b) * den) / den;
+    if (s < lo) s = Math.ceil(lo * den) / den;
     if (s > hi) s = Math.floor(hi * den) / den;
     this.setViewBeat(s);
   }
@@ -1161,7 +1216,8 @@ export class EditorState {
 
   seek(f: number): void {
     // EditorState.swift :: EditorState.seek(fraction:)
-    const sec = Math.min(Math.max(0, f), 1) * this.totalSec;
+    const lo = this.minSec;
+    const sec = lo + Math.min(Math.max(0, f), 1) * (this.totalSec - lo);
     this.scrollViewBeat(this.timeMap.beatAtSec(sec));
   }
 
@@ -1414,7 +1470,9 @@ export class EditorState {
   visibleNoteIndices(g: LaneGeo): number[] {
     // EditorState.swift :: EditorState.visibleNoteIndices(_:)
     const ppb = g.ppb;
-    if (!Number.isFinite(ppb) || ppb <= 0) return this.chart.notes.map((_, i) => i);
+    if (!Number.isFinite(ppb) || ppb <= 0) {
+      return this.chart.notes.map((_, i) => i);
+    }
     const margin = 0.05 + 40.0 / ppb;
     return this.notesOverlapping(g.beatOf(g.H) - margin, g.beatOf(0) + margin);
   }
@@ -1692,6 +1750,8 @@ export class EditorState {
     this.recomputeTotal();
     if (this._viewBeat > this.maxBeat) {
       this._viewBeat = this.maxBeat;
+    } else if (this._viewBeat < this.minBeat) {
+      this._viewBeat = this.minBeat;
     }
     if (this.sessionPersistenceEnabled) {
       void EditorSessionStorage.saveAudio(this.oggData, this.oggFileName).then((res) => {
@@ -1853,7 +1913,7 @@ export class EditorState {
   // MARK: Snap & Width Helpers (EditorState+Tools.swift)
 
   snapBeat(v: number): Beat {
-    return Beat.nearest(Math.max(0, v), this.snapDen); // EditorState+Tools.swift :: snapBeat(_:)
+    return Beat.nearest(this._clampChartRange ? Math.max(0, v) : v, this.snapDen); // EditorState+Tools.swift :: snapBeat(_:)
   }
 
   snapNote(centerX: number, wu: number): { x: number; w: number } {
@@ -2292,7 +2352,7 @@ export class EditorState {
     } else {
       delta = Beat.nearest(rawBeats, this.snapDen);
     }
-    if (!this.moveMinBeat.lessThan(Beat.zero) && this.moveMinBeat.add(delta).lessThan(Beat.zero)) {
+    if (this._clampChartRange && !this.moveMinBeat.lessThan(Beat.zero) && this.moveMinBeat.add(delta).lessThan(Beat.zero)) {
       delta = Beat.zero.sub(this.moveMinBeat);
     }
     const rawX = g.xOf(current.x) - g.xOf(start.x);
@@ -2557,7 +2617,7 @@ export class EditorState {
   // MARK: Add / Hit / Remove (EditorState+Tools.swift)
 
   addNote(n: Note): void {
-    if (n.beat.value < 0) return;
+    if (this._clampChartRange && n.beat.value < 0) return;
     if (n.segs.length === 0) {
       const v = n.beat.value;
       const isTap = !isWipeNote(n);
@@ -3475,7 +3535,7 @@ export class EditorState {
 
   addOrReplaceBPM(beat: Beat, bpm: number): void {
     // EditorState+Tools.swift :: EditorState.addOrReplaceBPM(beat:bpm:)
-    if (beat.value < 0) return;
+    if (this._clampChartRange && beat.value < 0) return;
     const v = Math.max(10, Math.min(3000, bpm)); // EditorState+Tools.swift :: addOrReplaceBPM (10...3000)
     this.pushUndo();
     const idx = this.chart.times.findIndex((t) => t.beat.equals(beat));

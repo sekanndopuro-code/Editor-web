@@ -1486,6 +1486,17 @@ const SettingWindowContent: React.FC<{
 
           <SideDivider />
 
+          {checkRow(
+            '曲の長さ計算と移動範囲を正常範囲 (0〜曲長+60秒) に制限する',
+            'オンのとき (初期値・元の仕様): 曲の長さ (totalSec / maxBeat) の計算から「曲の長さ + 60秒」(音源なし時は3時間) を超える点のノーツ・seg を除外し、再生ラインの移動範囲を 0 〜 maxBeat、シークバー密度棒を 0 〜 totalSec に制限します (手動配置の beat < 0 も禁止)。オフにすると、範囲外のノーツ・seg も含めて曲の長さ・スクロール範囲・密度棒を計算し、マイナス拍への移動・配置も許可します。',
+            state.clampChartRange,
+            () => {
+              state.clampChartRange = !state.clampChartRange;
+            }
+          )}
+
+          <SideDivider />
+
           {/* SideWindow.swift :: SettingWindowContent.holdRow */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: '100%' }}>
             {sliderRow(

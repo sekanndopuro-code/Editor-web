@@ -172,17 +172,18 @@ export const SeekRenderer = {
     ctx.fillStyle = SwiftColors.seekBevel; // Renderers.swift :: SeekRenderer.draw
     ctx.fill();
 
-    const total = Math.max(1.0, state.totalSec);
+    const minSec = state.minSec;
+    const span = Math.max(1.0, state.totalSec - minSec);
     const regionH = H * this.regionScale;
-    const yOf = (sec: number) => regionH - (sec / total) * regionH;
+    const yOf = (sec: number) => regionH - ((sec - minSec) / span) * regionH;
     const x0 = ox + sideW;
     const right = W - 0.5; // Renderers.swift :: SeekRenderer.draw
     const underSide: { x: number; y: number; w: number; h: number }[] = [];
 
     if (this.showViewWindow) {
       const lane = state.geo(100, H);
-      const yTop = yOf(state.timeMap.secAtBeat(Math.max(0, lane.beatOf(0))));
-      const yBot = yOf(state.timeMap.secAtBeat(Math.max(0, lane.beatOf(H))));
+      const yTop = yOf(state.timeMap.secAtBeat(Math.max(state.minBeat, lane.beatOf(0))));
+      const yBot = yOf(state.timeMap.secAtBeat(Math.max(state.minBeat, lane.beatOf(H))));
       ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'; // Renderers.swift :: SeekRenderer.draw
       ctx.fillRect(x0, yTop, W - x0, Math.max(2, yBot - yTop));
     }

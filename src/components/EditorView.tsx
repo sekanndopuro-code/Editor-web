@@ -703,8 +703,29 @@ const LaneView: React.FC<{
     scrollOrigin: number | null;
   }>({ pointerId: null, session: 'idle', startX: 0, startY: 0, scrollOrigin: null });
   const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pinchRef = useRef<{ startDist: number; startVisibleBeats: number } | null>(null);
+  const pinchRef = useRef<{
+    startDist: number;
+    startVisibleBeats: number;
+    startClientDist: number;
+    active: boolean;
+  } | null>(null);
   const panBlockedRef = useRef(false);
+  const multiTapRef = useRef<{
+    maxCount: number;
+    eligible: boolean;
+    firstDownMs: number;
+    origins: Map<number, { clientX: number; clientY: number }>;
+  }>({
+    maxCount: 0,
+    eligible: false,
+    firstDownMs: 0,
+    origins: new Map(),
+  });
+
+  const TAP_MOVE_THRESHOLD_PX = 22;
+  const PINCH_START_DELTA_PX = 12;
+  const TAP_MAX_DURATION_MS = 550;
+  const CONCURRENT_JOIN_WINDOW_MS = 350;
 
   const toLocalPt = (clientX: number, clientY: number) => {
     const el = laneRef.current;
@@ -718,7 +739,17 @@ const LaneView: React.FC<{
     };
   };
 
-  const endActivePointer = (e: React.PointerEvent<HTMLDivElement>) => {
+  const endActivePointer = (e: React.PointerEvent<HTMLDivElement>, isCancel = false) => {
+    const mt = multiTapRef.current;
+    if (isCancel) {
+      mt.eligible = false;
+    } else if (mt.eligible) {
+      const orig = mt.origins.get(e.pointerId);
+      if (!orig || Math.hypot(e.clientX - orig.clientX, e.clientY - orig.clientY) > TAP_MOVE_THRESHOLD_PX) {
+        mt.eligible = false;
+      }
+    }
+    mt.origins.delete(e.pointerId);
     activePointersRef.current.delete(e.pointerId);
     const ps = pointerStateRef.current;
     if (ps.pointerId === e.pointerId) {
@@ -745,6 +776,20 @@ const LaneView: React.FC<{
     }
     if (activePointersRef.current.size === 0) {
       panBlockedRef.current = false;
+      if (
+        state.touchUndoRedo &&
+        mt.eligible &&
+        performance.now() - mt.firstDownMs <= TAP_MAX_DURATION_MS
+      ) {
+        if (mt.maxCount === 2) {
+          state.undo();
+        } else if (mt.maxCount >= 3) {
+          state.redo();
+        }
+      }
+      mt.maxCount = 0;
+      mt.eligible = false;
+      mt.origins.clear();
     }
     try {
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
@@ -795,6 +840,8 @@ const LaneView: React.FC<{
       <div
         onPointerDown={(e) => {
           const p = toLocalPt(e.clientX, e.clientY);
+          const now = performance.now();
+          const mt = multiTapRef.current;
           activePointersRef.current.set(e.pointerId, p);
           try {
             e.currentTarget.setPointerCapture(e.pointerId);
@@ -802,10 +849,35 @@ const LaneView: React.FC<{
             // Ignore Safari pointer capture edge cases
           }
 
-          if (activePointersRef.current.size === 2 && !state.laneToolActive) {
-            const pts = Array.from(activePointersRef.current.values());
-            const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
-            pinchRef.current = { startDist: Math.max(1, dist), startVisibleBeats: state.visibleBeats };
+          if (state.touchUndoRedo && e.pointerType !== 'mouse') {
+            if (activePointersRef.current.size === 1) {
+              mt.maxCount = 1;
+              mt.eligible = true;
+              mt.firstDownMs = now;
+              mt.origins.clear();
+              mt.origins.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+            } else {
+              mt.origins.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+              if (now - mt.firstDownMs > CONCURRENT_JOIN_WINDOW_MS) {
+                mt.eligible = false;
+              }
+              if (mt.eligible) {
+                mt.maxCount = Math.max(mt.maxCount, activePointersRef.current.size);
+              }
+            }
+          } else {
+            mt.eligible = false;
+          }
+
+          if (activePointersRef.current.size >= 2 && (mt.eligible || !state.laneToolActive)) {
+            if (pointerStateRef.current.session === 'tool') {
+              state.cancelLaneTouch();
+            } else if (
+              pointerStateRef.current.session === 'pan' &&
+              pointerStateRef.current.scrollOrigin !== null
+            ) {
+              state.setViewBeat(pointerStateRef.current.scrollOrigin);
+            }
             panBlockedRef.current = true;
             state.holdCancel();
             pointerStateRef.current = {
@@ -815,6 +887,19 @@ const LaneView: React.FC<{
               startY: 0,
               scrollOrigin: null,
             };
+
+            if (activePointersRef.current.size === 2 && !state.laneToolActive) {
+              const pts = Array.from(activePointersRef.current.values());
+              const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+              pinchRef.current = {
+                startDist: Math.max(1, dist),
+                startVisibleBeats: state.visibleBeats,
+                startClientDist: dist * designScale,
+                active: !(state.touchUndoRedo && mt.eligible),
+              };
+            } else {
+              pinchRef.current = null;
+            }
             return;
           }
 
@@ -841,9 +926,28 @@ const LaneView: React.FC<{
             activePointersRef.current.set(e.pointerId, p);
           }
 
-          if (pinchRef.current && activePointersRef.current.size >= 2 && !state.laneToolActive) {
+          const mt = multiTapRef.current;
+          if (mt.eligible) {
+            const orig = mt.origins.get(e.pointerId);
+            if (orig && Math.hypot(e.clientX - orig.clientX, e.clientY - orig.clientY) > TAP_MOVE_THRESHOLD_PX) {
+              mt.eligible = false;
+            }
+          }
+
+          if (pinchRef.current && activePointersRef.current.size === 2 && !state.laneToolActive) {
             const pts = Array.from(activePointersRef.current.values());
             const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+            if (!pinchRef.current.active) {
+              const clientDist = dist * designScale;
+              if (Math.abs(clientDist - pinchRef.current.startClientDist) > PINCH_START_DELTA_PX) {
+                pinchRef.current.active = true;
+                pinchRef.current.startDist = Math.max(1, dist);
+                pinchRef.current.startVisibleBeats = state.visibleBeats;
+                mt.eligible = false;
+              } else {
+                return;
+              }
+            }
             const scale = dist / pinchRef.current.startDist;
             state.pinchZoom(pinchRef.current.startVisibleBeats, scale);
             return;
@@ -873,8 +977,8 @@ const LaneView: React.FC<{
             }
           }
         }}
-        onPointerUp={(e) => endActivePointer(e)}
-        onPointerCancel={(e) => endActivePointer(e)}
+        onPointerUp={(e) => endActivePointer(e, false)}
+        onPointerCancel={(e) => endActivePointer(e, true)}
         onWheel={(e) => {
           e.preventDefault();
           if (e.ctrlKey || e.metaKey) {
@@ -1062,13 +1166,15 @@ export const EditorView: React.FC<{ state: EditorState }> = ({ state }) => {
   };
 
   const moreMenuTop = (scale: number): number => {
+    const editTopCount = state.touchUndoRedo ? 8 : 9;
     const iconScale = RightPanelConstants.effectiveIconScale(
       rightW / RightPanelConstants.width,
       designH,
       true,
-      compact
+      compact,
+      editTopCount
     );
-    const top = RightPanelConstants.moreCenterY(designH, compact, iconScale) - MORE_TOP_ABOVE_BUTTON;
+    const top = RightPanelConstants.moreCenterY(designH, compact, iconScale, editTopCount) - MORE_TOP_ABOVE_BUTTON;
     const menuH = (MORE_ROW_HEIGHT * MORE_ROW_COUNT + MORE_PAD * 2) * scale;
     return Math.max(4, Math.min(top, designH - menuH - 4));
   };

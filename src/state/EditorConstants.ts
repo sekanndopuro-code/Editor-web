@@ -149,29 +149,35 @@ export const RightPanelConstants = {
     return this.edgeInsetBase + (compact ? this.compactEdgeExtra : 0); // EditorView.swift :: RightPanel.edgeInset(compact:)
   },
 
-  basePitch(height: number, editing: boolean, compact: boolean): number {
-    const topCount = editing ? 9 : 6; // EditorView.swift :: RightPanel.basePitch (9 EDIT slots, 6 MAIN slots)
+  basePitch(height: number, editing: boolean, compact: boolean, editTopCount = 9): number {
+    const topCount = editing ? editTopCount : 6; // EditorView.swift :: RightPanel.basePitch (9 EDIT slots, 6 MAIN slots)
     return Math.min(this.slotPitch, (height - this.edgeInset(compact) * 2) / (topCount + this.bottomCount)); // EditorView.swift :: RightPanel.basePitch
   },
 
-  iconScaleLimit(height: number, editing: boolean, compact: boolean): number {
-    const count = (editing ? 9 : 6) + this.bottomCount; // EditorView.swift :: RightPanel.iconScaleLimit
+  iconScaleLimit(height: number, editing: boolean, compact: boolean, editTopCount = 9): number {
+    const count = (editing ? editTopCount : 6) + this.bottomCount; // EditorView.swift :: RightPanel.iconScaleLimit
     const room = (height - this.edgeInset(compact) * 2) / count; // EditorView.swift :: RightPanel.iconScaleLimit
-    const gap = this.basePitch(height, editing, compact) - this.refIconHeight; // EditorView.swift :: RightPanel.iconScaleLimit
+    const gap = this.basePitch(height, editing, compact, editTopCount) - this.refIconHeight; // EditorView.swift :: RightPanel.iconScaleLimit
     return Math.max(1, (room - gap) / this.refIconHeight); // EditorView.swift :: RightPanel.iconScaleLimit
   },
 
-  effectiveIconScale(requested: number, height: number, editing: boolean, compact: boolean): number {
-    return Math.max(1, Math.min(requested, this.iconScaleLimit(height, editing, compact))); // EditorView.swift :: RightPanel.effectiveIconScale
+  effectiveIconScale(
+    requested: number,
+    height: number,
+    editing: boolean,
+    compact: boolean,
+    editTopCount = 9
+  ): number {
+    return Math.max(1, Math.min(requested, this.iconScaleLimit(height, editing, compact, editTopCount))); // EditorView.swift :: RightPanel.effectiveIconScale
   },
 
-  pitch(height: number, editing: boolean, compact = false, iconScale = 1): number {
-    const base = this.basePitch(height, editing, compact);
+  pitch(height: number, editing: boolean, compact = false, iconScale = 1, editTopCount = 9): number {
+    const base = this.basePitch(height, editing, compact, editTopCount);
     return base + this.refIconHeight * Math.max(0, iconScale - 1); // EditorView.swift :: RightPanel.pitch
   },
 
-  moreCenterY(height: number, compact = false, iconScale = 1): number {
-    return this.edgeInset(compact) + this.pitch(height, true, compact, iconScale) * 7.5; // EditorView.swift :: RightPanel.moreCenterY
+  moreCenterY(height: number, compact = false, iconScale = 1, editTopCount = 9): number {
+    return this.edgeInset(compact) + this.pitch(height, true, compact, iconScale, editTopCount) * 7.5; // EditorView.swift :: RightPanel.moreCenterY
   },
 } as const;
 

@@ -313,6 +313,7 @@ export class EditorState {
   private _resnapExistingNotes = false; // EditorState.swift :: EditorState.resnapExistingNotes
   private _copyKeepsRangeOffset = false; // EditorState.swift :: EditorState.copyKeepsRangeOffset
   private _clampChartRange = true;
+  private _touchUndoRedo = false;
   private _showWaveform = false;
   private _showSpectrogram = false;
   readonly audioVisuals: AudioVisualCache;
@@ -378,6 +379,11 @@ export class EditorState {
 
   widthTargets: { index: number; orig: Note }[] = [];
   widthUndoPushed = false;
+  private touchPreSelection: {
+    selectedIDs: Set<NoteID>;
+    modifySlideID: NoteID | null;
+    modifySegIndex: number | null;
+  } | null = null;
 
   private undoStack: Snapshot[] = [];
   private redoStack: Snapshot[] = [];
@@ -495,6 +501,9 @@ export class EditorState {
 
     const clampRange = EditorState.readStoredBool('editor.clampChartRange');
     if (clampRange !== null) this._clampChartRange = clampRange;
+
+    const touchUndo = EditorState.readStoredBool('editor.touchUndoRedo');
+    if (touchUndo !== null) this._touchUndoRedo = touchUndo;
 
     const hold = EditorState.readStoredNumber('editor.holdDeselectSec');
     if (hold !== null) this._holdDeselectSec = Math.min(Math.max(hold, 1.0), 5.0);
@@ -652,6 +661,13 @@ export class EditorState {
   set touchEffect(v: boolean) {
     this._touchEffect = v;
     EditorState.writeStoredSetting('editor.touchEffect', v);
+    this.emitUI();
+  }
+
+  get touchUndoRedo(): boolean { return this._touchUndoRedo; }
+  set touchUndoRedo(v: boolean) {
+    this._touchUndoRedo = v;
+    EditorState.writeStoredSetting('editor.touchUndoRedo', v);
     this.emitUI();
   }
 
@@ -2076,6 +2092,11 @@ export class EditorState {
       if (this.dragMode === 'moving') this.finishMove();
       if (this.dragMode === 'segDrag') this.finishSegDrag();
       this.resetDragState();
+      this.touchPreSelection = {
+        selectedIDs: new Set(this.selectedIDs),
+        modifySlideID: this.modifySlideID,
+        modifySegIndex: this.modifySegIndex,
+      };
       if (this.isPlaying) {
         this.dragMode = 'ignore';
       } else {
@@ -2121,7 +2142,43 @@ export class EditorState {
         break;
     }
 
-    if (phase === 'ended') this.resetDragState();
+    if (phase === 'ended') {
+      this.touchPreSelection = null;
+      this.resetDragState();
+    }
+  }
+
+  cancelLaneTouch(): void {
+    this.holdCancel();
+    if (this.dragMode === 'moving' && this.moveTargets.length > 0) {
+      for (const t of this.moveTargets) {
+        if (t.index < this.chart.notes.length && this.chart.notes[t.index].id === t.orig.id) {
+          this.chart.notes[t.index] = t.orig;
+        }
+      }
+      this.dropLastUndo();
+    } else if (this.dragMode === 'segDrag' && this.segDragNoteID !== null && this.segDragOrig !== null) {
+      const ni = this.indexOfNote(this.segDragNoteID);
+      if (ni !== null && this.segDragIndex < this.chart.notes[ni].segs.length) {
+        this.chart.notes[ni].segs[this.segDragIndex] = this.segDragOrig;
+      }
+      if (this.segDragUndoPushed) this.dropLastUndo();
+      this.segDragNoteID = null;
+      this.segDragOrig = null;
+      this.segDragUndoPushed = false;
+    }
+    if (this.lassoPoints.length > 0) {
+      this.lassoPoints = [];
+    }
+    this.ghost = null;
+    if (this.touchPreSelection) {
+      this.selectedIDs = this.touchPreSelection.selectedIDs;
+      this.modifySlideID = this.touchPreSelection.modifySlideID;
+      this.modifySegIndex = this.touchPreSelection.modifySegIndex;
+      this.touchPreSelection = null;
+    }
+    this.resetDragState();
+    this.emitUI();
   }
 
   private resetDragState(): void {

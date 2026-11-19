@@ -159,14 +159,16 @@ export const RightPanel: React.FC<{
   const [labelFadeTransition, setLabelFadeTransition] = useState('none');
   const timerRef = useRef<number | null>(null);
 
+  const editTopCount = state.touchUndoRedo ? 8 : 9;
   const edgeInset = RightPanelConstants.edgeInset(compact);
   const iconScale = RightPanelConstants.effectiveIconScale(
     state.rightPanelWidth / RightPanelConstants.width,
     designHeight,
     state.editing,
-    compact
+    compact,
+    editTopCount
   );
-  const pitch = RightPanelConstants.pitch(designHeight, state.editing, compact, iconScale);
+  const pitch = RightPanelConstants.pitch(designHeight, state.editing, compact, iconScale, editTopCount);
 
   const restartLabelTimer = (active: boolean) => {
     // EditorView.swift :: RightPanel.restartLabelTimer
@@ -202,7 +204,7 @@ export const RightPanel: React.FC<{
     'Order',
     'Adv.',
     'More',
-    'Undo / Redo',
+    ...(state.touchUndoRedo ? [] : ['Undo / Redo']),
   ]; // EditorView.swift :: RightPanel.editLabels
 
   const metaLabels = ['Back', 'Information', 'More', 'Review', 'Quit']; // EditorView.swift :: RightPanel.metaLabels
@@ -326,26 +328,28 @@ export const RightPanel: React.FC<{
                 state.emitUI();
               }}
             />
-            <div style={{ display: 'flex', width: '100%', height: pitch }}>
-              <PanelButton
-                glyph="↶"
-                dimmed={state.undoCount === 0}
-                disabled={state.undoCount === 0}
-                iconScale={iconScale}
-                pitch={pitch}
-                flex
-                onClick={() => state.undo()}
-              />
-              <PanelButton
-                glyph="↷"
-                dimmed={state.redoCount === 0}
-                disabled={state.redoCount === 0}
-                iconScale={iconScale}
-                pitch={pitch}
-                flex
-                onClick={() => state.redo()}
-              />
-            </div>
+            {!state.touchUndoRedo && (
+              <div style={{ display: 'flex', width: '100%', height: pitch }}>
+                <PanelButton
+                  glyph="↶"
+                  dimmed={state.undoCount === 0}
+                  disabled={state.undoCount === 0}
+                  iconScale={iconScale}
+                  pitch={pitch}
+                  flex
+                  onClick={() => state.undo()}
+                />
+                <PanelButton
+                  glyph="↷"
+                  dimmed={state.redoCount === 0}
+                  disabled={state.redoCount === 0}
+                  iconScale={iconScale}
+                  pitch={pitch}
+                  flex
+                  onClick={() => state.redo()}
+                />
+              </div>
+            )}
           </>
         ) : state.metaOpen ? (
           <>

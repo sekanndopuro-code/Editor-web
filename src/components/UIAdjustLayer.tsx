@@ -142,11 +142,12 @@ export const UIAdjustLayer: React.FC<{
   const stripPct = Math.round((state.stripWidth / UIAdjustConstants.stripWidthDefault) * 100);
   const buttonPct = Math.round(layout.scale * 100);
   const want = state.rightPanelWidth / UIAdjustConstants.panelWidthDefault;
+  const editTopCount = state.touchUndoRedo ? 8 : 9;
   const mainPct = Math.round(
-    Math.min(want, RightPanelConstants.iconScaleLimit(H, false, compact)) * 100
+    Math.min(want, RightPanelConstants.iconScaleLimit(H, false, compact, editTopCount)) * 100
   );
   const editPct = Math.round(
-    Math.min(want, RightPanelConstants.iconScaleLimit(H, true, compact)) * 100
+    Math.min(want, RightPanelConstants.iconScaleLimit(H, true, compact, editTopCount)) * 100
   );
   const laneLeft = sw + SeekPanelConstants.totalWidth;
   const laneW = Math.max(1, W - pw - laneLeft);

@@ -1530,6 +1530,17 @@ const SettingWindowContent: React.FC<{
           <SideDivider />
 
           {checkRow(
+            'undo / redo を2点 / 3点同時押しで発動する',
+            'オンにすると、お絵描きソフトのようにレーンを 2本指で同時タップすると Undo (取り消し)、3本指で同時タップすると Redo (やり直し) が発動します (2本指で開く・閉じる動きをすると従来どおりピンチズームになります)。オンの間は EDIT 中の右メニューから Undo / Redo ボタンが非表示になり、UI調整モードでの EDIT 中のアイコン拡大上限も広がります。',
+            state.touchUndoRedo,
+            () => {
+              state.touchUndoRedo = !state.touchUndoRedo;
+            }
+          )}
+
+          <SideDivider />
+
+          {checkRow(
             '波形を表示',
             undefined,
             state.showWaveform,
